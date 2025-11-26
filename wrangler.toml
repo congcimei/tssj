@@ -1,0 +1,7 @@
+name = "complaint-system"
+compatibility_date = "2023-10-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tssj"
+database_id = "a0dd651f-6b6e-418a-b129-a01a8bc8f7d1"
