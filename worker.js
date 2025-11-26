@@ -4,13 +4,29 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
     
+    // 添加CORS头
+    const corsHeaders = {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    };
+    
+    // 处理预检请求
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { headers: corsHeaders });
+    }
+    
     // 初始化数据库表（如果不存在）
-    await initDatabase(env);
+    const initResult = await initDatabase(env);
+    console.log('数据库初始化结果:', initResult);
     
     // 处理主页请求
     if (path === '/' || path === '/index.html') {
       return new Response(htmlTemplate, {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        headers: { 
+          'Content-Type': 'text/html; charset=utf-8',
+          ...corsHeaders
+        }
       });
     }
     
@@ -18,15 +34,40 @@ export default {
     if (path === '/submit' && request.method === 'POST') {
       try {
         const data = await request.json();
+        console.log('收到提交数据:', data);
+        
+        // 检查表是否存在
+        const tableCheck = await env.DB.prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='complaints'"
+        ).first();
+        
+        console.log('表检查结果:', tableCheck);
+        
+        if (!tableCheck) {
+          // 表不存在，重新创建
+          console.log('complaints表不存在，重新创建...');
+          await env.DB.exec(`
+            CREATE TABLE complaints (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              main_reason TEXT NOT NULL,
+              sub_reason TEXT,
+              contact TEXT,
+              content TEXT,
+              image_count INTEGER DEFAULT 0,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+          `);
+          console.log('表创建成功');
+        }
         
         // 插入数据到D1数据库
         const result = await env.DB.prepare(
           'INSERT INTO complaints (main_reason, sub_reason, contact, content, image_count, created_at) VALUES (?, ?, ?, ?, ?, ?)'
         ).bind(
-          data.mainReason, 
+          data.mainReason || '未知', 
           data.subReason || '', 
-          data.contact,
-          data.content,
+          data.contact || '',
+          data.content || '',
           data.imageCount || 0,
           new Date().toISOString()
         ).run();
@@ -40,23 +81,20 @@ export default {
         }), {
           headers: { 
             'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'POST',
-            'Access-Control-Allow-Headers': 'Content-Type'
+            ...corsHeaders
           }
         });
       } catch (error) {
         console.error('数据插入失败:', error);
         return new Response(JSON.stringify({ 
           success: false, 
-          message: '提交失败: ' + error.message 
+          message: '提交失败: ' + error.message,
+          errorDetail: error.toString()
         }), {
           status: 500,
           headers: { 
             'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'POST',
-            'Access-Control-Allow-Headers': 'Content-Type'
+            ...corsHeaders
           }
         });
       }
@@ -65,6 +103,18 @@ export default {
     // 处理管理后台请求
     if (path === '/admin') {
       try {
+        // 检查表是否存在
+        const tableCheck = await env.DB.prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='complaints'"
+        ).first();
+        
+        if (!tableCheck) {
+          return new Response('数据库表不存在，请先提交一条投诉以创建表', { 
+            status: 500,
+            headers: { 'Content-Type': 'text/html; charset=utf-8' }
+          });
+        }
+        
         // 获取投诉记录
         const { results } = await env.DB.prepare(
           'SELECT * FROM complaints ORDER BY created_at DESC'
@@ -74,12 +124,65 @@ export default {
           headers: { 'Content-Type': 'text/html; charset=utf-8' }
         });
       } catch (error) {
-        return new Response('数据库查询失败: ' + error.message, { status: 500 });
+        return new Response('数据库查询失败: ' + error.message, { 
+          status: 500,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        });
+      }
+    }
+    
+    // 调试接口：显示数据库信息
+    if (path === '/debug') {
+      try {
+        // 获取所有表
+        const tables = await env.DB.prepare(
+          "SELECT name FROM sqlite_master WHERE type='table'"
+        ).all();
+        
+        // 获取complaints表结构
+        let tableStructure = null;
+        try {
+          tableStructure = await env.DB.prepare("PRAGMA table_info(complaints)").all();
+        } catch (e) {
+          tableStructure = { error: e.message };
+        }
+        
+        // 获取记录数量
+        let recordCount = null;
+        try {
+          recordCount = await env.DB.prepare("SELECT COUNT(*) as count FROM complaints").first();
+        } catch (e) {
+          recordCount = { error: e.message };
+        }
+        
+        const debugInfo = {
+          tables: tables.results,
+          complaints_structure: tableStructure,
+          complaints_count: recordCount,
+          timestamp: new Date().toISOString()
+        };
+        
+        return new Response(JSON.stringify(debugInfo, null, 2), {
+          headers: { 
+            'Content-Type': 'application/json',
+            ...corsHeaders
+          }
+        });
+      } catch (error) {
+        return new Response(JSON.stringify({ error: error.message }), {
+          headers: { 
+            'Content-Type': 'application/json',
+            ...corsHeaders
+          }
+        });
       }
     }
     
     // 处理其他路径
-    return new Response('页面未找到', { status: 404 });
+    return new Response('页面未找到', { 
+      status: 404,
+      headers: { ...corsHeaders }
+    });
   }
 }
 
@@ -98,13 +201,13 @@ async function initDatabase(env) {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    console.log('数据库表初始化成功');
+    return { success: true, message: '数据库表初始化成功' };
   } catch (error) {
-    console.error('数据库表初始化失败:', error);
+    return { success: false, message: '数据库表初始化失败: ' + error.message };
   }
 }
 
-// HTML模板（使用上面完整的HTML代码）
+// HTML模板（使用之前提供的完整HTML代码）
 const htmlTemplate = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -793,16 +896,22 @@ const htmlTemplate = `<!DOCTYPE html>
                     imageCount: formData.images.length
                 };
                 
+                console.log('提交数据:', submitData);
+                
                 // 提交数据到后端
                 submitComplaint(submitData)
                     .then(result => {
                         if (result.success) {
                             showPage('page-success');
                         } else {
+                            errorMessage.textContent = result.message || '提交失败，请稍后重试';
+                            if (result.errorDetail) {
+                                console.error('提交错误详情:', result.errorDetail);
+                            }
                             errorMessage.style.display = 'block';
                             setTimeout(() => {
                                 errorMessage.style.display = 'none';
-                            }, 3000);
+                            }, 5000);
                             
                             // 重新启用提交按钮
                             submitBtn.disabled = false;
@@ -811,10 +920,11 @@ const htmlTemplate = `<!DOCTYPE html>
                     })
                     .catch(error => {
                         console.error('提交失败:', error);
+                        errorMessage.textContent = '网络错误，请检查连接后重试';
                         errorMessage.style.display = 'block';
                         setTimeout(() => {
                             errorMessage.style.display = 'none';
-                        }, 3000);
+                        }, 5000);
                         
                         // 重新启用提交按钮
                         submitBtn.disabled = false;
@@ -842,7 +952,8 @@ const htmlTemplate = `<!DOCTYPE html>
                     if (response.ok) {
                         return await response.json();
                     } else {
-                        throw new Error('提交失败');
+                        const errorText = await response.text();
+                        throw new Error(`HTTP ${response.status}: ${errorText}`);
                     }
                 } catch (error) {
                     throw error;
@@ -897,7 +1008,7 @@ const htmlTemplate = `<!DOCTYPE html>
         });
     </script>
 </body>
-</html>`; // 这里放置上面完整的HTML代码
+</html>`;
 
 // 管理后台模板
 function adminTemplate(complaints) {
@@ -1004,6 +1115,14 @@ function adminTemplate(complaints) {
             padding: 40px;
             color: #7f8c8d;
         }
+        
+        .debug-link {
+            display: inline-block;
+            margin-top: 10px;
+            color: #666;
+            text-decoration: none;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
@@ -1057,6 +1176,8 @@ function adminTemplate(complaints) {
         </div>
         
         <a href="/" class="back-link">返回投诉页面</a>
+        <br>
+        <a href="/debug" class="debug-link" target="_blank">查看数据库调试信息</a>
     </div>
 </body>
 </html>`;
