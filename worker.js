@@ -1,214 +1,45 @@
-// worker.js
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
-    
-    // 添加CORS头
-    const corsHeaders = {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    };
-    
-    // 处理预检请求
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: corsHeaders });
-    }
-    
-    // 初始化数据库表（如果不存在）
-    const initResult = await initDatabase(env);
-    console.log('数据库初始化结果:', initResult);
-    
-    // 处理主页请求
-    if (path === '/' || path === '/index.html') {
-      return new Response(htmlTemplate, {
-        headers: { 
-          'Content-Type': 'text/html; charset=utf-8',
-          ...corsHeaders
+    const method = request.method;
+
+    // CORS 处理
+    if (method === 'OPTIONS') {
+      return new Response(null, {
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
         }
       });
     }
-    
-    // 处理提交投诉请求
-    if (path === '/submit' && request.method === 'POST') {
-      try {
-        const data = await request.json();
-        console.log('收到提交数据:', data);
-        
-        // 检查表是否存在
-        const tableCheck = await env.DB.prepare(
-          "SELECT name FROM sqlite_master WHERE type='table' AND name='complaints'"
-        ).first();
-        
-        console.log('表检查结果:', tableCheck);
-        
-        if (!tableCheck) {
-          // 表不存在，重新创建
-          console.log('complaints表不存在，重新创建...');
-          await env.DB.exec(`
-            CREATE TABLE complaints (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              main_reason TEXT NOT NULL,
-              sub_reason TEXT,
-              contact TEXT,
-              content TEXT,
-              image_count INTEGER DEFAULT 0,
-              created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-          `);
-          console.log('表创建成功');
-        }
-        
-        // 插入数据到D1数据库
-        const result = await env.DB.prepare(
-          'INSERT INTO complaints (main_reason, sub_reason, contact, content, image_count, created_at) VALUES (?, ?, ?, ?, ?, ?)'
-        ).bind(
-          data.mainReason || '未知', 
-          data.subReason || '', 
-          data.contact || '',
-          data.content || '',
-          data.imageCount || 0,
-          new Date().toISOString()
-        ).run();
-        
-        console.log('数据插入成功，ID:', result.meta.last_row_id);
-        
-        return new Response(JSON.stringify({ 
-          success: true, 
-          message: '投诉提交成功',
-          id: result.meta.last_row_id
-        }), {
-          headers: { 
-            'Content-Type': 'application/json',
-            ...corsHeaders
-          }
-        });
-      } catch (error) {
-        console.error('数据插入失败:', error);
-        return new Response(JSON.stringify({ 
-          success: false, 
-          message: '提交失败: ' + error.message,
-          errorDetail: error.toString()
-        }), {
-          status: 500,
-          headers: { 
-            'Content-Type': 'application/json',
-            ...corsHeaders
-          }
-        });
-      }
-    }
-    
-    // 处理管理后台请求
-    if (path === '/admin') {
-      try {
-        // 检查表是否存在
-        const tableCheck = await env.DB.prepare(
-          "SELECT name FROM sqlite_master WHERE type='table' AND name='complaints'"
-        ).first();
-        
-        if (!tableCheck) {
-          return new Response('数据库表不存在，请先提交一条投诉以创建表', { 
-            status: 500,
-            headers: { 'Content-Type': 'text/html; charset=utf-8' }
-          });
-        }
-        
-        // 获取投诉记录
-        const { results } = await env.DB.prepare(
-          'SELECT * FROM complaints ORDER BY created_at DESC'
-        ).all();
-        
-        return new Response(adminTemplate(results), {
-          headers: { 'Content-Type': 'text/html; charset=utf-8' }
-        });
-      } catch (error) {
-        return new Response('数据库查询失败: ' + error.message, { 
-          status: 500,
-          headers: { 'Content-Type': 'text/html; charset=utf-8' }
-        });
-      }
-    }
-    
-    // 调试接口：显示数据库信息
-    if (path === '/debug') {
-      try {
-        // 获取所有表
-        const tables = await env.DB.prepare(
-          "SELECT name FROM sqlite_master WHERE type='table'"
-        ).all();
-        
-        // 获取complaints表结构
-        let tableStructure = null;
-        try {
-          tableStructure = await env.DB.prepare("PRAGMA table_info(complaints)").all();
-        } catch (e) {
-          tableStructure = { error: e.message };
-        }
-        
-        // 获取记录数量
-        let recordCount = null;
-        try {
-          recordCount = await env.DB.prepare("SELECT COUNT(*) as count FROM complaints").first();
-        } catch (e) {
-          recordCount = { error: e.message };
-        }
-        
-        const debugInfo = {
-          tables: tables.results,
-          complaints_structure: tableStructure,
-          complaints_count: recordCount,
-          timestamp: new Date().toISOString()
-        };
-        
-        return new Response(JSON.stringify(debugInfo, null, 2), {
-          headers: { 
-            'Content-Type': 'application/json',
-            ...corsHeaders
-          }
-        });
-      } catch (error) {
-        return new Response(JSON.stringify({ error: error.message }), {
-          headers: { 
-            'Content-Type': 'application/json',
-            ...corsHeaders
-          }
-        });
-      }
-    }
-    
-    // 处理其他路径
-    return new Response('页面未找到', { 
-      status: 404,
-      headers: { ...corsHeaders }
-    });
-  }
-}
 
-// 初始化数据库表
-async function initDatabase(env) {
-  try {
-    // 创建投诉表（如果不存在）
-    await env.DB.exec(`
-      CREATE TABLE IF NOT EXISTS complaints (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        main_reason TEXT NOT NULL,
-        sub_reason TEXT,
-        contact TEXT,
-        content TEXT,
-        image_count INTEGER DEFAULT 0,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-    return { success: true, message: '数据库表初始化成功' };
-  } catch (error) {
-    return { success: false, message: '数据库表初始化失败: ' + error.message };
-  }
-}
+    // 路由处理
+    if (path === '/' || path === '/index.html') {
+      return serveStaticPage('index.html');
+    } else if (path === '/submit') {
+      return serveStaticPage('submit.html');
+    } else if (path === '/success') {
+      return serveStaticPage('success.html');
+    } else if (path === '/api/complaints' && method === 'POST') {
+      return handleComplaintSubmit(request, env);
+    } else if (path === '/api/complaints' && method === 'GET') {
+      return getComplaints(request, env);
+    } else if (path.startsWith('/api/complaints/') && method === 'DELETE') {
+      return deleteComplaint(request, env, path);
+    }
 
-// HTML模板（使用之前提供的完整HTML代码）
-const htmlTemplate = `<!DOCTYPE html>
+    return new Response('Not Found', { status: 404 });
+  }
+};
+
+// 服务静态页面
+async function serveStaticPage(pageName) {
+  let htmlContent = '';
+  
+  if (pageName === 'index.html') {
+    htmlContent = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -219,224 +50,683 @@ const htmlTemplate = `<!DOCTYPE html>
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: "PingFang SC", "Helvetica Neue", Arial, sans-serif;
         }
         
         body {
-            background-color: #f5f5f5;
+            font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Helvetica, sans-serif;
+            background: #f5f5f5;
             color: #333;
             line-height: 1.6;
-            padding: 20px;
         }
         
         .container {
-            max-width: 600px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-            overflow: hidden;
+            max-width: 100%;
+            padding: 0;
         }
         
         .header {
-            padding: 20px;
-            border-bottom: 1px solid #eee;
+            background: #07C160;
+            color: white;
+            padding: 15px;
             text-align: center;
-            font-size: 18px;
-            font-weight: 600;
-            color: #333;
             position: relative;
+        }
+        
+        .header h1 {
+            font-size: 18px;
+            font-weight: normal;
         }
         
         .back-btn {
             position: absolute;
-            left: 20px;
+            left: 15px;
             top: 50%;
             transform: translateY(-50%);
-            background: none;
-            border: none;
+            color: white;
+            text-decoration: none;
             font-size: 16px;
-            color: #07C160;
-            cursor: pointer;
         }
         
-        .page {
-            padding: 20px;
-            display: none;
+        .complaint-list {
+            background: white;
+            margin-top: 10px;
         }
         
-        .page.active {
-            display: block;
-        }
-        
-        .reason-list {
-            margin: 20px 0;
-        }
-        
-        .reason-item {
-            display: flex;
-            align-items: center;
-            padding: 12px 0;
+        .complaint-item {
+            padding: 15px;
             border-bottom: 1px solid #f0f0f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
             cursor: pointer;
         }
         
-        .reason-item:last-child {
+        .complaint-item:last-child {
             border-bottom: none;
         }
         
-        .reason-radio {
-            width: 20px;
-            height: 20px;
-            border-radius: 50%;
-            border: 1px solid #ccc;
-            margin-right: 12px;
+        .complaint-item .arrow {
+            color: #999;
+            font-size: 14px;
+        }
+        
+        .complaint-content {
+            flex: 1;
+        }
+        
+        .complaint-title {
+            font-size: 16px;
+            margin-bottom: 5px;
+        }
+        
+        .complaint-desc {
+            font-size: 14px;
+            color: #999;
+        }
+        
+        .sub-category {
+            background: #fafafa;
+            padding-left: 15px;
+        }
+        
+        .sub-item {
+            padding: 12px 15px;
+            border-bottom: 1px solid #f0f0f0;
             display: flex;
+            justify-content: space-between;
             align-items: center;
-            justify-content: center;
+            cursor: pointer;
+        }
+        
+        .sub-item:last-child {
+            border-bottom: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <a href="javascript:history.back()" class="back-btn">返回</a>
+            <h1>投诉举报</h1>
+        </div>
+        
+        <div class="complaint-list">
+            <!-- 发布不适当内容 -->
+            <div class="complaint-item" onclick="toggleSubCategory('inappropriate')">
+                <div class="complaint-content">
+                    <div class="complaint-title">发布不适当内容对我造成骚扰</div>
+                    <div class="complaint-desc">色情、暴力、违法信息等</div>
+                </div>
+                <div class="arrow">></div>
+            </div>
+            <div id="inappropriate" class="sub-category" style="display: none;">
+                <div class="sub-item" onclick="goToSubmit('inappropriate', '色情')">
+                    <div>色情</div>
+                    <div class="arrow">></div>
+                </div>
+                <div class="sub-item" onclick="goToSubmit('inappropriate', '违法犯罪及违禁品')">
+                    <div>违法犯罪及违禁品</div>
+                    <div class="arrow">></div>
+                </div>
+                <div class="sub-item" onclick="goToSubmit('inappropriate', '赌博')">
+                    <div>赌博</div>
+                    <div class="arrow">></div>
+                </div>
+                <div class="sub-item" onclick="goToSubmit('inappropriate', '政治谣言')">
+                    <div>政治谣言</div>
+                    <div class="arrow">></div>
+                </div>
+                <div class="sub-item" onclick="goToSubmit('inappropriate', '暴恐血腥')">
+                    <div>暴恐血腥</div>
+                    <div class="arrow">></div>
+                </div>
+                <div class="sub-item" onclick="goToSubmit('inappropriate', '其他违规内容')">
+                    <div>其他违规内容</div>
+                    <div class="arrow">></div>
+                </div>
+            </div>
+            
+            <!-- 存在欺诈骗钱行为 -->
+            <div class="complaint-item" onclick="toggleSubCategory('fraud')">
+                <div class="complaint-content">
+                    <div class="complaint-title">存在欺诈骗钱行为</div>
+                    <div class="complaint-desc">金融诈骗、网络兼职诈骗等</div>
+                </div>
+                <div class="arrow">></div>
+            </div>
+            <div id="fraud" class="sub-category" style="display: none;">
+                <div class="sub-item" onclick="goToSubmit('fraud', '金融诈骗')">
+                    <div>金融诈骗 (贷款/提额/代开/套现等)</div>
+                    <div class="arrow">></div>
+                </div>
+                <div class="sub-item" onclick="goToSubmit('fraud', '网络兼职刷单诈骗')">
+                    <div>网络兼职刷单诈骗</div>
+                    <div class="arrow">></div>
+                </div>
+                <div class="sub-item" onclick="goToSubmit('fraud', '返利诈骗')">
+                    <div>返利诈骗</div>
+                    <div class="arrow">></div>
+                </div>
+                <div class="sub-item" onclick="goToSubmit('fraud', '网络交友诈骗')">
+                    <div>网络交友诈骗</div>
+                    <div class="arrow">></div>
+                </div>
+                <div class="sub-item" onclick="goToSubmit('fraud', '虚假投资理财诈骗')">
+                    <div>虚假投资理财诈骗</div>
+                    <div class="arrow">></div>
+                </div>
+                <div class="sub-item" onclick="goToSubmit('fraud', '赌博诈骗')">
+                    <div>赌博诈骗</div>
+                    <div class="arrow">></div>
+                </div>
+                <div class="sub-item" onclick="goToSubmit('fraud', '收款不发货')">
+                    <div>收款不发货</div>
+                    <div class="arrow">></div>
+                </div>
+                <div class="sub-item" onclick="goToSubmit('fraud', '仿冒他人诈骗')">
+                    <div>仿冒他人诈骗</div>
+                    <div class="arrow">></div>
+                </div>
+                <div class="sub-item" onclick="goToSubmit('fraud', '免费送诈骗')">
+                    <div>免费送诈骗</div>
+                    <div class="arrow">></div>
+                </div>
+                <div class="sub-item" onclick="goToSubmit('fraud', '游戏相关诈骗')">
+                    <div>游戏相关诈骗(代练/充值等)</div>
+                    <div class="arrow">></div>
+                </div>
+                <div class="sub-item" onclick="goToSubmit('fraud', '其他诈骗行为')">
+                    <div>其他诈骗行为</div>
+                    <div class="arrow">></div>
+                </div>
+            </div>
+            
+            <!-- 直接跳转的投诉类型 -->
+            <div class="complaint-item" onclick="goToSubmitDirect('account_theft', '此账号可能被盗用了')">
+                <div class="complaint-content">
+                    <div class="complaint-title">此账号可能被盗用了</div>
+                    <div class="complaint-desc">账号异常登录、发布异常内容</div>
+                </div>
+                <div class="arrow">></div>
+            </div>
+            
+            <div class="complaint-item" onclick="goToSubmitDirect('infringement', '存在侵权行为')">
+                <div class="complaint-content">
+                    <div class="complaint-title">存在侵权行为</div>
+                    <div class="complaint-desc">侵犯版权、商标权等</div>
+                </div>
+                <div class="arrow">></div>
+            </div>
+            
+            <div class="complaint-item" onclick="goToSubmitDirect('counterfeit', '发布仿冒品信息')">
+                <div class="complaint-content">
+                    <div class="complaint-title">发布仿冒品信息</div>
+                    <div class="complaint-desc">假冒伪劣商品信息</div>
+                </div>
+                <div class="arrow">></div>
+            </div>
+            
+            <div class="complaint-item" onclick="goToSubmitDirect('impersonation', '冒充他人')">
+                <div class="complaint-content">
+                    <div class="complaint-title">冒充他人</div>
+                    <div class="complaint-desc">冒用他人身份信息</div>
+                </div>
+                <div class="arrow">></div>
+            </div>
+            
+            <div class="complaint-item" onclick="goToSubmitDirect('minors', '侵犯未成年人权益')">
+                <div class="complaint-content">
+                    <div class="complaint-title">侵犯未成年人权益</div>
+                    <div class="complaint-desc">危害未成年人身心健康</div>
+                </div>
+                <div class="arrow">></div>
+            </div>
+            
+            <div class="complaint-item" onclick="goToSubmitDirect('fan_behavior', '粉丝无底线追星行为')">
+                <div class="complaint-content">
+                    <div class="complaint-title">粉丝无底线追星行为</div>
+                    <div class="complaint-desc">过度追星、网络暴力等</div>
+                </div>
+                <div class="arrow">></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function toggleSubCategory(categoryId) {
+            const element = document.getElementById(categoryId);
+            if (element.style.display === 'block') {
+                element.style.display = 'none';
+            } else {
+                element.style.display = 'block';
+            }
+        }
+        
+        function goToSubmit(category, subCategory) {
+            const mainCategory = getMainCategoryName(category);
+            localStorage.setItem('complaintCategory', mainCategory);
+            localStorage.setItem('complaintSubCategory', subCategory);
+            window.location.href = '/submit';
+        }
+        
+        function goToSubmitDirect(category, categoryName) {
+            localStorage.setItem('complaintCategory', categoryName);
+            localStorage.setItem('complaintSubCategory', '');
+            window.location.href = '/submit';
+        }
+        
+        function getMainCategoryName(category) {
+            const names = {
+                'inappropriate': '发布不适当内容对我造成骚扰',
+                'fraud': '存在欺诈骗钱行为',
+                'account_theft': '此账号可能被盗用了',
+                'infringement': '存在侵权行为',
+                'counterfeit': '发布仿冒品信息',
+                'impersonation': '冒充他人',
+                'minors': '侵犯未成年人权益',
+                'fan_behavior': '粉丝无底线追星行为'
+            };
+            return names[category] || category;
+        }
+    </script>
+</body>
+</html>`;
+  } else if (pageName === 'submit.html') {
+    htmlContent = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title> </title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Helvetica, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 100%;
+            padding: 0;
+        }
+        
+        .header {
+            background: #07C160;
+            color: white;
+            padding: 15px;
+            text-align: center;
             position: relative;
         }
         
-        .reason-radio.selected::after {
-            content: '';
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            background: #07C160;
+        .header h1 {
+            font-size: 18px;
+            font-weight: normal;
         }
         
-        .reason-text {
-            flex: 1;
-            font-size: 16px;
-        }
-        
-        .notice {
-            background-color: #f9f9f9;
-            border-radius: 8px;
-            padding: 15px;
-            margin: 20px 0;
-            font-size: 14px;
-            color: #666;
-            line-height: 1.5;
-        }
-        
-        .btn-group {
-            display: flex;
-            justify-content: space-between;
-            margin-top: 20px;
-        }
-        
-        .btn {
-            padding: 12px 20px;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background-color 0.2s;
-            border: none;
-        }
-        
-        .btn-primary {
-            background: #07C160;
+        .back-btn {
+            position: absolute;
+            left: 15px;
+            top: 50%;
+            transform: translateY(-50%);
             color: white;
+            text-decoration: none;
+            font-size: 16px;
         }
         
-        .btn-primary:hover {
-            background: #06ae56;
+        .form-section {
+            background: white;
+            margin-top: 10px;
+            padding: 15px;
         }
         
-        .btn-primary:disabled {
-            background: #ccc;
-            cursor: not-allowed;
-        }
-        
-        .btn-secondary {
-            background: #f0f0f0;
+        .section-title {
+            font-size: 16px;
+            margin-bottom: 10px;
             color: #333;
         }
         
-        .btn-secondary:hover {
-            background: #e0e0e0;
-        }
-        
-        .message {
+        .category-info {
+            background: #f8f8f8;
             padding: 10px;
-            border-radius: 8px;
-            margin-top: 15px;
-            text-align: center;
-            display: none;
-        }
-        
-        .success {
-            background: #e8f5e9;
-            color: #2e7d32;
-            border: 1px solid #c8e6c9;
-        }
-        
-        .error {
-            background: #ffebee;
-            color: #c62828;
-            border: 1px solid #ffcdd2;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            font-size: 14px;
         }
         
         .form-group {
             margin-bottom: 20px;
         }
         
-        .form-group label {
+        .form-label {
             display: block;
             margin-bottom: 8px;
-            font-weight: 600;
+            font-size: 16px;
+            color: #333;
         }
         
-        .form-control {
+        .form-input {
             width: 100%;
             padding: 12px;
             border: 1px solid #ddd;
-            border-radius: 8px;
+            border-radius: 4px;
             font-size: 16px;
+            background: #fff;
         }
         
-        textarea.form-control {
-            resize: vertical;
+        textarea.form-input {
             min-height: 100px;
+            resize: vertical;
         }
         
-        .upload-area {
+        .image-upload {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .upload-item {
+            width: 100%;
+            height: 80px;
             border: 1px dashed #ddd;
-            border-radius: 8px;
-            padding: 20px;
-            text-align: center;
-            margin-bottom: 10px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #fafafa;
             cursor: pointer;
         }
         
-        .upload-icon {
-            font-size: 40px;
-            color: #ccc;
-            margin-bottom: 10px;
-        }
-        
-        .upload-text {
+        .upload-item .plus {
+            font-size: 24px;
             color: #999;
         }
         
-        .upload-count {
-            text-align: right;
-            color: #999;
+        .image-count {
             font-size: 14px;
-        }
-        
-        .char-count {
-            text-align: right;
             color: #999;
-            font-size: 14px;
             margin-top: 5px;
         }
         
-        .success-page {
+        .submit-btn {
+            background: #07C160;
+            color: white;
+            border: none;
+            padding: 15px;
+            border-radius: 4px;
+            font-size: 16px;
+            width: 100%;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+        
+        .submit-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .required::after {
+            content: " *";
+            color: red;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <a href="javascript:history.back()" class="back-btn">返回</a>
+            <h1>提交投诉</h1>
+        </div>
+        
+        <div class="form-section">
+            <div class="category-info">
+                <div id="categoryDisplay">投诉类型加载中...</div>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label required">联系方式</label>
+                <input type="text" class="form-input" id="contact" placeholder="请填写您的联系方式" 
+                       oninput="checkFormValidity()">
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">图片上传</label>
+                <div class="image-upload" id="imageUpload">
+                    <div class="upload-item" onclick="triggerImageUpload()">
+                        <div class="plus">+</div>
+                    </div>
+                </div>
+                <div class="image-count" id="imageCount">0/9</div>
+                <input type="file" id="imageInput" multiple accept="image/*" style="display: none;" 
+                       onchange="handleImageSelect(event)">
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label required">投诉内容</label>
+                <textarea class="form-input" id="complaintContent" placeholder="请详细描述投诉内容" 
+                          oninput="checkFormValidity()"></textarea>
+            </div>
+            
+            <button class="submit-btn" id="submitBtn" disabled onclick="submitComplaint()">提交</button>
+        </div>
+    </div>
+
+    <script>
+        // 页面加载时显示投诉类型
+        document.addEventListener('DOMContentLoaded', function() {
+            const mainCategory = localStorage.getItem('complaintCategory');
+            const subCategory = localStorage.getItem('complaintSubCategory');
+            
+            let displayText = mainCategory;
+            if (subCategory) {
+                displayText += ` - ${subCategory}`;
+            }
+            
+            document.getElementById('categoryDisplay').textContent = displayText;
+        });
+        
+        let selectedImages = [];
+        
+        function triggerImageUpload() {
+            document.getElementById('imageInput').click();
+        }
+        
+        function handleImageSelect(event) {
+            const files = event.target.files;
+            if (selectedImages.length + files.length > 9) {
+                alert('最多只能上传9张图片');
+                return;
+            }
+            
+            for (let i = 0; i < files.length; i++) {
+                if (selectedImages.length >= 9) break;
+                
+                const file = files[i];
+                if (file.type.startsWith('image/')) {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        selectedImages.push({
+                            file: file,
+                            dataUrl: e.target.result
+                        });
+                        updateImageDisplay();
+                    };
+                    reader.readAsDataURL(file);
+                }
+            }
+            
+            // 重置input以便再次选择相同文件
+            event.target.value = '';
+        }
+        
+        function updateImageDisplay() {
+            const container = document.getElementById('imageUpload');
+            const countElement = document.getElementById('imageCount');
+            
+            container.innerHTML = '';
+            
+            // 显示已选择的图片
+            selectedImages.forEach((image, index) => {
+                const imgItem = document.createElement('div');
+                imgItem.className = 'upload-item';
+                imgItem.style.backgroundImage = `url(${image.dataUrl})`;
+                imgItem.style.backgroundSize = 'cover';
+                imgItem.style.backgroundPosition = 'center';
+                imgItem.style.position = 'relative';
+                
+                const deleteBtn = document.createElement('div');
+                deleteBtn.innerHTML = '×';
+                deleteBtn.style.position = 'absolute';
+                deleteBtn.style.top = '-5px';
+                deleteBtn.style.right = '-5px';
+                deleteBtn.style.background = 'red';
+                deleteBtn.style.color = 'white';
+                deleteBtn.style.width = '20px';
+                deleteBtn.style.height = '20px';
+                deleteBtn.style.borderRadius = '50%';
+                deleteBtn.style.display = 'flex';
+                deleteBtn.style.alignItems = 'center';
+                deleteBtn.style.justifyContent = 'center';
+                deleteBtn.style.cursor = 'pointer';
+                deleteBtn.style.fontSize = '14px';
+                deleteBtn.onclick = function(e) {
+                    e.stopPropagation();
+                    selectedImages.splice(index, 1);
+                    updateImageDisplay();
+                };
+                
+                imgItem.appendChild(deleteBtn);
+                container.appendChild(imgItem);
+            });
+            
+            // 添加上传按钮（如果还有空间）
+            if (selectedImages.length < 9) {
+                const uploadBtn = document.createElement('div');
+                uploadBtn.className = 'upload-item';
+                uploadBtn.innerHTML = '<div class="plus">+</div>';
+                uploadBtn.onclick = triggerImageUpload;
+                container.appendChild(uploadBtn);
+            }
+            
+            countElement.textContent = `${selectedImages.length}/9`;
+        }
+        
+        function checkFormValidity() {
+            const contact = document.getElementById('contact').value.trim();
+            const content = document.getElementById('complaintContent').value.trim();
+            const submitBtn = document.getElementById('submitBtn');
+            
+            submitBtn.disabled = !(contact && content);
+        }
+        
+        async function submitComplaint() {
+            const contact = document.getElementById('contact').value.trim();
+            const content = document.getElementById('complaintContent').value.trim();
+            const mainCategory = localStorage.getItem('complaintCategory');
+            const subCategory = localStorage.getItem('complaintSubCategory');
+            
+            if (!contact || !content) {
+                alert('请填写必填字段');
+                return;
+            }
+            
+            const submitBtn = document.getElementById('submitBtn');
+            submitBtn.disabled = true;
+            submitBtn.textContent = '提交中...';
+            
+            try {
+                // 处理图片上传（这里简化处理，实际应该上传到云存储）
+                const imageData = await processImagesForUpload();
+                
+                const complaintData = {
+                    mainCategory: mainCategory,
+                    subCategory: subCategory,
+                    contact: contact,
+                    content: content,
+                    images: imageData,
+                    submitTime: new Date().toISOString()
+                };
+                
+                const response = await fetch('/api/complaints', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(complaintData)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    // 清空本地存储
+                    localStorage.removeItem('complaintCategory');
+                    localStorage.removeItem('complaintSubCategory');
+                    
+                    // 跳转到成功页面
+                    window.location.href = '/success';
+                } else {
+                    alert('提交失败: ' + result.error);
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = '提交';
+                }
+            } catch (error) {
+                alert('网络错误: ' + error.message);
+                submitBtn.disabled = false;
+                submitBtn.textContent = '提交';
+            }
+        }
+        
+        async function processImagesForUpload() {
+            // 这里简化处理，实际应该将图片上传到云存储并返回URL
+            // 现在只返回图片的基本信息
+            return selectedImages.map((img, index) => ({
+                name: `image_${index + 1}.jpg`,
+                size: img.file.size,
+                type: img.file.type
+            }));
+        }
+    </script>
+</body>
+</html>`;
+  } else if (pageName === 'success.html') {
+    htmlContent = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title> </title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Helvetica, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
             text-align: center;
-            padding: 40px 20px;
+        }
+        
+        .success-container {
+            background: white;
+            padding: 40px 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            max-width: 300px;
+            width: 90%;
         }
         
         .success-icon {
@@ -446,739 +736,188 @@ const htmlTemplate = `<!DOCTYPE html>
         }
         
         .success-title {
-            font-size: 20px;
-            font-weight: 600;
+            font-size: 18px;
             margin-bottom: 10px;
+            color: #333;
         }
         
-        .success-text {
+        .success-message {
+            font-size: 14px;
             color: #666;
-            margin-bottom: 30px;
+            margin-bottom: 25px;
+            line-height: 1.5;
+        }
+        
+        .back-btn {
+            background: #07C160;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+            width: 100%;
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <!-- 第一页：投诉原因选择 -->
-        <div class="page active" id="page-main">
-            <div class="header">请选择投诉该帐号的原因</div>
-            
-            <div class="reason-list">
-                <div class="reason-item" data-next="page-inappropriate">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">发布不适当内容对我造成骚扰</div>
-                </div>
-                <div class="reason-item" data-next="page-fraud">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">存在欺诈骗钱行为</div>
-                </div>
-                <div class="reason-item" data-next="page-submit">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">此账号可能被盗用了</div>
-                </div>
-                <div class="reason-item" data-next="page-submit">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">存在侵权行为</div>
-                </div>
-                <div class="reason-item" data-next="page-submit">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">发布仿冒品信息</div>
-                </div>
-                <div class="reason-item" data-next="page-submit">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">冒充他人</div>
-                </div>
-                <div class="reason-item" data-next="page-submit">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">侵犯未成年人权益</div>
-                </div>
-                <div class="reason-item" data-next="page-submit">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">粉丝无底线追星行为</div>
-                </div>
-            </div>
-            
-            <div class="notice">
-                投诉须知：请确保您的投诉内容真实有效，虚假投诉可能承担相应法律责任。
-            </div>
-            
-            <div class="btn-group">
-                <button class="btn btn-primary" id="nextBtnMain" disabled>下一步</button>
-            </div>
+    <div class="success-container">
+        <div class="success-icon">✓</div>
+        <div class="success-title">提交成功</div>
+        <div class="success-message">
+            感谢您的反馈，我们会在3个工作日内处理您的投诉。
+            <br>请保持联系方式畅通。
         </div>
-        
-        <!-- 第二页：不适当内容二级页面 -->
-        <div class="page" id="page-inappropriate">
-            <div class="header">
-                <button class="back-btn" data-back="page-main">返回</button>
-                请选择具体原因
-            </div>
-            
-            <div class="reason-list">
-                <div class="reason-item" data-value="色情">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">色情</div>
-                </div>
-                <div class="reason-item" data-value="违法犯罪及违禁品">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">违法犯罪及违禁品</div>
-                </div>
-                <div class="reason-item" data-value="赌博">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">赌博</div>
-                </div>
-                <div class="reason-item" data-value="政治谣言">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">政治谣言</div>
-                </div>
-                <div class="reason-item" data-value="暴恐血腥">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">暴恐血腥</div>
-                </div>
-                <div class="reason-item" data-value="其他违规内容">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">其他违规内容</div>
-                </div>
-            </div>
-            
-            <div class="btn-group">
-                <button class="btn btn-secondary" data-back="page-main">上一步</button>
-                <button class="btn btn-primary" id="nextBtnInappropriate" disabled>下一步</button>
-            </div>
-        </div>
-        
-        <!-- 第三页：欺诈行为二级页面 -->
-        <div class="page" id="page-fraud">
-            <div class="header">
-                <button class="back-btn" data-back="page-main">返回</button>
-                请选择具体原因
-            </div>
-            
-            <div class="reason-list">
-                <div class="reason-item" data-value="金融诈骗 (贷款/提额/代开/套现等)">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">金融诈骗 (贷款/提额/代开/套现等)</div>
-                </div>
-                <div class="reason-item" data-value="网络兼职刷单诈骗">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">网络兼职刷单诈骗</div>
-                </div>
-                <div class="reason-item" data-value="返利诈骗">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">返利诈骗</div>
-                </div>
-                <div class="reason-item" data-value="网络交友诈骗">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">网络交友诈骗</div>
-                </div>
-                <div class="reason-item" data-value="虚假投资理财诈骗">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">虚假投资理财诈骗</div>
-                </div>
-                <div class="reason-item" data-value="赌博诈骗">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">赌博诈骗</div>
-                </div>
-                <div class="reason-item" data-value="收款不发货">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">收款不发货</div>
-                </div>
-                <div class="reason-item" data-value="仿冒他人诈骗">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">仿冒他人诈骗</div>
-                </div>
-                <div class="reason-item" data-value="免费送诈骗">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">免费送诈骗</div>
-                </div>
-                <div class="reason-item" data-value="游戏相关诈骗(代练/充值等)">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">游戏相关诈骗(代练/充值等)</div>
-                </div>
-                <div class="reason-item" data-value="其他诈骗行为">
-                    <div class="reason-radio"></div>
-                    <div class="reason-text">其他诈骗行为</div>
-                </div>
-            </div>
-            
-            <div class="btn-group">
-                <button class="btn btn-secondary" data-back="page-main">上一步</button>
-                <button class="btn btn-primary" id="nextBtnFraud" disabled>下一步</button>
-            </div>
-        </div>
-        
-        <!-- 提交页面 -->
-        <div class="page" id="page-submit">
-            <div class="header">
-                <button class="back-btn" id="backBtnSubmit">返回</button>
-                提交投诉
-            </div>
-            
-            <div class="form-group">
-                <label for="contact">联系方式</label>
-                <input type="text" id="contact" class="form-control" placeholder="填写联系方式">
-            </div>
-            
-            <div class="form-group">
-                <label>图片上传 <span id="uploadCount">0/9</span></label>
-                <div class="upload-area" id="uploadArea">
-                    <div class="upload-icon">+</div>
-                    <div class="upload-text">点击上传图片</div>
-                </div>
-                <input type="file" id="fileInput" multiple accept="image/*" style="display: none;">
-                <div id="imagePreview" style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px;"></div>
-            </div>
-            
-            <div class="form-group">
-                <label for="content">投诉内容 <span id="charCount">0/200</span></label>
-                <textarea id="content" class="form-control" placeholder="投诉内容"></textarea>
-            </div>
-            
-            <div class="btn-group">
-                <button class="btn btn-secondary" id="backBtnPage">上一步</button>
-                <button class="btn btn-primary" id="submitBtn" disabled>提交</button>
-            </div>
-        </div>
-        
-        <!-- 成功页面 -->
-        <div class="page" id="page-success">
-            <div class="success-page">
-                <div class="success-icon">✓</div>
-                <div class="success-title">提交成功</div>
-                <div class="success-text">感谢您的反馈，我们会尽快处理您的投诉。</div>
-                <button class="btn btn-primary" id="restartBtn">返回首页</button>
-            </div>
-        </div>
-        
-        <div class="message error" id="errorMessage">提交失败，请稍后重试</div>
+        <button class="back-btn" onclick="goBackToHome()">返回首页</button>
     </div>
 
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            // 页面元素
-            const pages = document.querySelectorAll('.page');
-            const pageMain = document.getElementById('page-main');
-            const pageInappropriate = document.getElementById('page-inappropriate');
-            const pageFraud = document.getElementById('page-fraud');
-            const pageSubmit = document.getElementById('page-submit');
-            const pageSuccess = document.getElementById('page-success');
-            
-            // 按钮元素
-            const nextBtnMain = document.getElementById('nextBtnMain');
-            const nextBtnInappropriate = document.getElementById('nextBtnInappropriate');
-            const nextBtnFraud = document.getElementById('nextBtnFraud');
-            const submitBtn = document.getElementById('submitBtn');
-            const restartBtn = document.getElementById('restartBtn');
-            const backBtnSubmit = document.getElementById('backBtnSubmit');
-            const backBtnPage = document.getElementById('backBtnPage');
-            
-            // 表单元素
-            const contactInput = document.getElementById('contact');
-            const contentInput = document.getElementById('content');
-            const fileInput = document.getElementById('fileInput');
-            const uploadArea = document.getElementById('uploadArea');
-            const imagePreview = document.getElementById('imagePreview');
-            const uploadCount = document.getElementById('uploadCount');
-            const charCount = document.getElementById('charCount');
-            
-            // 消息元素
-            const errorMessage = document.getElementById('errorMessage');
-            
-            // 数据存储
-            let formData = {
-                mainReason: null,
-                subReason: null,
-                contact: '',
-                images: [],
-                content: ''
-            };
-            
-            let currentPage = 'page-main';
-            let previousPage = null;
-            
-            // 页面切换函数
-            function showPage(pageId, fromPage = null) {
-                pages.forEach(page => page.classList.remove('active'));
-                document.getElementById(pageId).classList.add('active');
-                
-                if (fromPage) {
-                    previousPage = fromPage;
-                }
-                currentPage = pageId;
-            }
-            
-            // 主页面逻辑
-            const mainReasonItems = pageMain.querySelectorAll('.reason-item');
-            mainReasonItems.forEach(item => {
-                item.addEventListener('click', function() {
-                    // 清除之前的选择
-                    mainReasonItems.forEach(i => {
-                        i.querySelector('.reason-radio').classList.remove('selected');
-                    });
-                    
-                    // 设置当前选择
-                    this.querySelector('.reason-radio').classList.add('selected');
-                    formData.mainReason = this.querySelector('.reason-text').textContent;
-                    
-                    // 记录下一页
-                    const nextPage = this.getAttribute('data-next');
-                    formData.nextPage = nextPage;
-                    
-                    // 启用下一步按钮
-                    nextBtnMain.disabled = false;
-                });
-            });
-            
-            nextBtnMain.addEventListener('click', function() {
-                if (formData.nextPage === 'page-submit') {
-                    // 直接跳转到提交页面
-                    showPage('page-submit', 'page-main');
-                } else {
-                    // 跳转到二级页面
-                    showPage(formData.nextPage, 'page-main');
-                }
-            });
-            
-            // 不适当内容页面逻辑
-            const inappropriateItems = pageInappropriate.querySelectorAll('.reason-item');
-            inappropriateItems.forEach(item => {
-                item.addEventListener('click', function() {
-                    // 清除之前的选择
-                    inappropriateItems.forEach(i => {
-                        i.querySelector('.reason-radio').classList.remove('selected');
-                    });
-                    
-                    // 设置当前选择
-                    this.querySelector('.reason-radio').classList.add('selected');
-                    formData.subReason = this.getAttribute('data-value');
-                    
-                    // 启用下一步按钮
-                    nextBtnInappropriate.disabled = false;
-                });
-            });
-            
-            nextBtnInappropriate.addEventListener('click', function() {
-                showPage('page-submit', 'page-inappropriate');
-            });
-            
-            // 欺诈行为页面逻辑
-            const fraudItems = pageFraud.querySelectorAll('.reason-item');
-            fraudItems.forEach(item => {
-                item.addEventListener('click', function() {
-                    // 清除之前的选择
-                    fraudItems.forEach(i => {
-                        i.querySelector('.reason-radio').classList.remove('selected');
-                    });
-                    
-                    // 设置当前选择
-                    this.querySelector('.reason-radio').classList.add('selected');
-                    formData.subReason = this.getAttribute('data-value');
-                    
-                    // 启用下一步按钮
-                    nextBtnFraud.disabled = false;
-                });
-            });
-            
-            nextBtnFraud.addEventListener('click', function() {
-                showPage('page-submit', 'page-fraud');
-            });
-            
-            // 返回按钮逻辑
-            document.querySelectorAll('.back-btn').forEach(btn => {
-                btn.addEventListener('click', function() {
-                    const backPage = this.getAttribute('data-back');
-                    showPage(backPage);
-                });
-            });
-            
-            backBtnSubmit.addEventListener('click', function() {
-                if (previousPage) {
-                    showPage(previousPage);
-                } else {
-                    showPage('page-main');
-                }
-            });
-            
-            backBtnPage.addEventListener('click', function() {
-                if (previousPage) {
-                    showPage(previousPage);
-                } else {
-                    showPage('page-main');
-                }
-            });
-            
-            // 图片上传逻辑
-            uploadArea.addEventListener('click', function() {
-                fileInput.click();
-            });
-            
-            fileInput.addEventListener('change', function() {
-                const files = Array.from(this.files);
-                
-                // 检查文件数量
-                if (formData.images.length + files.length > 9) {
-                    alert('最多只能上传9张图片');
-                    return;
-                }
-                
-                files.forEach(file => {
-                    if (!file.type.startsWith('image/')) {
-                        alert('请上传图片文件');
-                        return;
-                    }
-                    
-                    // 添加到数据
-                    formData.images.push(file);
-                    
-                    // 创建预览
-                    const reader = new FileReader();
-                    reader.onload = function(e) {
-                        const img = document.createElement('img');
-                        img.src = e.target.result;
-                        img.style.width = '80px';
-                        img.style.height = '80px';
-                        img.style.objectFit = 'cover';
-                        img.style.borderRadius = '4px';
-                        imagePreview.appendChild(img);
-                    };
-                    reader.readAsDataURL(file);
-                });
-                
-                // 更新计数
-                uploadCount.textContent = `${formData.images.length}/9`;
-                
-                // 显示预览区域
-                if (formData.images.length > 0) {
-                    imagePreview.style.display = 'flex';
-                }
-                
-                // 清空文件输入，以便可以再次选择相同文件
-                this.value = '';
-            });
-            
-            // 字符计数逻辑
-            contentInput.addEventListener('input', function() {
-                const length = this.value.length;
-                charCount.textContent = `${length}/200`;
-                
-                if (length > 200) {
-                    this.value = this.value.substring(0, 200);
-                    charCount.textContent = '200/200';
-                }
-                
-                formData.content = this.value;
-                checkSubmitButton();
-            });
-            
-            // 联系方式输入逻辑
-            contactInput.addEventListener('input', function() {
-                formData.contact = this.value;
-                checkSubmitButton();
-            });
-            
-            // 检查提交按钮状态
-            function checkSubmitButton() {
-                submitBtn.disabled = !(formData.contact && formData.content);
-            }
-            
-            // 提交逻辑
-            submitBtn.addEventListener('click', function() {
-                // 禁用按钮防止重复提交
-                submitBtn.disabled = true;
-                submitBtn.textContent = '提交中...';
-                
-                // 准备提交数据
-                const submitData = {
-                    mainReason: formData.mainReason,
-                    subReason: formData.subReason,
-                    contact: formData.contact,
-                    content: formData.content,
-                    imageCount: formData.images.length
-                };
-                
-                console.log('提交数据:', submitData);
-                
-                // 提交数据到后端
-                submitComplaint(submitData)
-                    .then(result => {
-                        if (result.success) {
-                            showPage('page-success');
-                        } else {
-                            errorMessage.textContent = result.message || '提交失败，请稍后重试';
-                            if (result.errorDetail) {
-                                console.error('提交错误详情:', result.errorDetail);
-                            }
-                            errorMessage.style.display = 'block';
-                            setTimeout(() => {
-                                errorMessage.style.display = 'none';
-                            }, 5000);
-                            
-                            // 重新启用提交按钮
-                            submitBtn.disabled = false;
-                            submitBtn.textContent = '提交';
-                        }
-                    })
-                    .catch(error => {
-                        console.error('提交失败:', error);
-                        errorMessage.textContent = '网络错误，请检查连接后重试';
-                        errorMessage.style.display = 'block';
-                        setTimeout(() => {
-                            errorMessage.style.display = 'none';
-                        }, 5000);
-                        
-                        // 重新启用提交按钮
-                        submitBtn.disabled = false;
-                        submitBtn.textContent = '提交';
-                    });
-            });
-            
-            // 重新开始
-            restartBtn.addEventListener('click', function() {
-                resetForm();
-                showPage('page-main');
-            });
-            
-            // 提交投诉到后端
-            async function submitComplaint(data) {
-                try {
-                    const response = await fetch('/submit', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify(data)
-                    });
-                    
-                    if (response.ok) {
-                        return await response.json();
-                    } else {
-                        const errorText = await response.text();
-                        throw new Error(`HTTP ${response.status}: ${errorText}`);
-                    }
-                } catch (error) {
-                    throw error;
-                }
-            }
-            
-            // 重置表单
-            function resetForm() {
-                // 清除选择
-                mainReasonItems.forEach(item => {
-                    item.querySelector('.reason-radio').classList.remove('selected');
-                });
-                
-                inappropriateItems.forEach(item => {
-                    item.querySelector('.reason-radio').classList.remove('selected');
-                });
-                
-                fraudItems.forEach(item => {
-                    item.querySelector('.reason-radio').classList.remove('selected');
-                });
-                
-                // 清空表单
-                contactInput.value = '';
-                contentInput.value = '';
-                fileInput.value = '';
-                imagePreview.innerHTML = '';
-                imagePreview.style.display = 'none';
-                
-                // 重置计数
-                uploadCount.textContent = '0/9';
-                charCount.textContent = '0/200';
-                
-                // 重置数据
-                formData = {
-                    mainReason: null,
-                    subReason: null,
-                    contact: '',
-                    images: [],
-                    content: ''
-                };
-                
-                // 重置按钮状态
-                nextBtnMain.disabled = true;
-                nextBtnInappropriate.disabled = true;
-                nextBtnFraud.disabled = true;
-                submitBtn.disabled = true;
-                submitBtn.textContent = '提交';
-                
-                // 重置页面状态
-                previousPage = null;
-            }
-        });
+        function goBackToHome() {
+            window.location.href = '/';
+        }
     </script>
 </body>
 </html>`;
+  }
+  
+  return new Response(htmlContent, {
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Access-Control-Allow-Origin': '*'
+    }
+  });
+}
 
-// 管理后台模板
-function adminTemplate(complaints) {
-  return `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>投诉管理后台</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        
-        body {
-            background-color: #f5f5f5;
-            color: #333;
-            line-height: 1.6;
-        }
-        
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        
-        header {
-            background-color: #fff;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            padding: 20px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-        }
-        
-        h1 {
-            color: #2c3e50;
-            margin-bottom: 10px;
-        }
-        
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 20px;
-        }
-        
-        .stat-card {
-            background-color: #fff;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-            text-align: center;
-        }
-        
-        .stat-number {
-            font-size: 24px;
-            font-weight: bold;
-            color: #3498db;
-        }
-        
-        .complaints-table {
-            background-color: #fff;
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        
-        th, td {
-            padding: 12px 15px;
-            text-align: left;
-            border-bottom: 1px solid #eee;
-        }
-        
-        th {
-            background-color: #f8f9fa;
-            font-weight: 600;
-        }
-        
-        tr:hover {
-            background-color: #f9f9f9;
-        }
-        
-        .back-link {
-            display: inline-block;
-            margin-top: 20px;
-            color: #3498db;
-            text-decoration: none;
-        }
-        
-        .back-link:hover {
-            text-decoration: underline;
-        }
-        
-        .empty-state {
-            text-align: center;
-            padding: 40px;
-            color: #7f8c8d;
-        }
-        
-        .debug-link {
-            display: inline-block;
-            margin-top: 10px;
-            color: #666;
-            text-decoration: none;
-            font-size: 14px;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <header>
-            <h1>投诉管理后台</h1>
-            <p>所有投诉记录</p>
-        </header>
-        
-        <div class="stats">
-            <div class="stat-card">
-                <div class="stat-number">${complaints.length}</div>
-                <div>总投诉数</div>
-            </div>
-        </div>
-        
-        <div class="complaints-table">
-            ${complaints.length > 0 ? `
-            <table>
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>主原因</th>
-                        <th>子原因</th>
-                        <th>联系方式</th>
-                        <th>投诉内容</th>
-                        <th>图片数量</th>
-                        <th>提交时间</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${complaints.map(complaint => `
-                    <tr>
-                        <td>${complaint.id}</td>
-                        <td>${complaint.main_reason}</td>
-                        <td>${complaint.sub_reason || '无'}</td>
-                        <td>${complaint.contact || '未填写'}</td>
-                        <td>${complaint.content || '无'}</td>
-                        <td>${complaint.image_count}</td>
-                        <td>${new Date(complaint.created_at).toLocaleString('zh-CN')}</td>
-                    </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-            ` : `
-            <div class="empty-state">
-                <h3>暂无投诉记录</h3>
-                <p>还没有用户提交投诉</p>
-            </div>
-            `}
-        </div>
-        
-        <a href="/" class="back-link">返回投诉页面</a>
-        <br>
-        <a href="/debug" class="debug-link" target="_blank">查看数据库调试信息</a>
-    </div>
-</body>
-</html>`;
+// 处理投诉提交
+async function handleComplaintSubmit(request, env) {
+  try {
+    const data = await request.json();
+    
+    // 验证必填字段
+    if (!data.mainCategory || !data.contact || !data.content) {
+      return jsonResponse({ 
+        success: false, 
+        error: '投诉类型、联系方式和投诉内容为必填项' 
+      });
+    }
+
+    // 生成投诉ID
+    const complaintId = generateId();
+    const createdAt = new Date().toISOString();
+    const status = 'pending'; // pending, processing, resolved
+
+    // 存储到D1数据库
+    const result = await env.DB.prepare(`
+      INSERT INTO complaints (id, main_category, sub_category, contact, content, images, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      complaintId,
+      data.mainCategory,
+      data.subCategory || '',
+      data.contact,
+      data.content,
+      JSON.stringify(data.images || []),
+      status,
+      createdAt
+    ).run();
+
+    if (result.success) {
+      return jsonResponse({
+        success: true,
+        complaintId: complaintId,
+        message: '投诉提交成功'
+      });
+    } else {
+      return jsonResponse({
+        success: false,
+        error: '数据库存储失败'
+      });
+    }
+  } catch (error) {
+    return jsonResponse({
+      success: false,
+      error: `提交失败: ${error.message}`
+    });
+  }
+}
+
+// 获取投诉列表（用于管理后台）
+async function getComplaints(request, env) {
+  try {
+    const url = new URL(request.url);
+    const page = parseInt(url.searchParams.get('page')) || 1;
+    const limit = parseInt(url.searchParams.get('limit')) || 20;
+    const offset = (page - 1) * limit;
+
+    const complaints = await env.DB.prepare(`
+      SELECT id, main_category, sub_category, contact, content, images, status, created_at
+      FROM complaints 
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `).bind(limit, offset).all();
+
+    // 获取总数
+    const countResult = await env.DB.prepare(`
+      SELECT COUNT(*) as total FROM complaints
+    `).first();
+
+    return jsonResponse({
+      success: true,
+      complaints: complaints.results,
+      pagination: {
+        page: page,
+        limit: limit,
+        total: countResult.total,
+        pages: Math.ceil(countResult.total / limit)
+      }
+    });
+  } catch (error) {
+    return jsonResponse({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+// 删除投诉
+async function deleteComplaint(request, env, path) {
+  const complaintId = path.split('/').pop();
+  
+  try {
+    const result = await env.DB.prepare(`
+      DELETE FROM complaints WHERE id = ?
+    `).bind(complaintId).run();
+
+    if (result.success) {
+      return jsonResponse({ 
+        success: true, 
+        message: '投诉删除成功' 
+      });
+    } else {
+      return jsonResponse({ 
+        success: false, 
+        error: '删除失败' 
+      });
+    }
+  } catch (error) {
+    return jsonResponse({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+}
+
+// 工具函数
+function generateId() {
+  return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
+}
+
+function jsonResponse(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status: status,
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*'
+    }
+  });
 }

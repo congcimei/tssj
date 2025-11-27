@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title> </title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Helvetica, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 100%;
+            padding: 0;
+        }
+        
+        .header {
+            background: #07C160;
+            color: white;
+            padding: 15px;
+            text-align: center;
+            position: relative;
+        }
+        
+        .header h1 {
+            font-size: 18px;
+            font-weight: normal;
+        }
+        
+        .back-btn {
+            position: absolute;
+            left: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: white;
+            text-decoration: none;
+            font-size: 16px;
+        }
+        
+        .form-section {
+            background: white;
+            margin-top: 10px;
+            padding: 15px;
+        }
+        
+        .section-title {
+            font-size: 16px;
+            margin-bottom: 10px;
+            color: #333;
+        }
+        
+        .category-info {
+            background: #f8f8f8;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 16px;
+            color: #333;
+        }
+        
+        .form-input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+            background: #fff;
+        }
+        
+        textarea.form-input {
+            min-height: 100px;
+            resize: vertical;
+        }
+        
+        .image-upload {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .upload-item {
+            width: 100%;
+            height: 80px;
+            border: 1px dashed #ddd;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #fafafa;
+            cursor: pointer;
+        }
+        
+        .upload-item .plus {
+            font-size: 24px;
+            color: #999;
+        }
+        
+        .image-count {
+            font-size: 14px;
+            color: #999;
+            margin-top: 5px;
+        }
+        
+        .submit-btn {
+            background: #07C160;
+            color: white;
+            border: none;
+            padding: 15px;
+            border-radius: 4px;
+            font-size: 16px;
+            width: 100%;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+        
+        .submit-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .required::after {
+            content: " *";
+            color: red;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <a href="javascript:history.back()" class="back-btn">返回</a>
+            <h1>提交投诉</h1>
+        </div>
+        
+        <div class="form-section">
+            <div class="category-info">
+                <div id="categoryDisplay">投诉类型加载中...</div>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label required">联系方式</label>
+                <input type="text" class="form-input" id="contact" placeholder="请填写您的联系方式" 
+                       oninput="checkFormValidity()">
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">图片上传</label>
+                <div class="image-upload" id="imageUpload">
+                    <div class="upload-item" onclick="triggerImageUpload()">
+                        <div class="plus">+</div>
+                    </div>
+                </div>
+                <div class="image-count" id="imageCount">0/9</div>
+                <input type="file" id="imageInput" multiple accept="image/*" style="display: none;" 
+                       onchange="handleImageSelect(event)">
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label required">投诉内容</label>
+                <textarea class="form-input" id="complaintContent" placeholder="请详细描述投诉内容" 
+                          oninput="checkFormValidity()"></textarea>
+            </div>
+            
+            <button class="submit-btn" id="submitBtn" disabled onclick="submitComplaint()">提交</button>
+        </div>
+    </div>
+
+    <script>
+        // 页面加载时显示投诉类型
+        document.addEventListener('DOMContentLoaded', function() {
+            const mainCategory = localStorage.getItem('complaintCategory');
+            const subCategory = localStorage.getItem('complaintSubCategory');
+            
+            let displayText = mainCategory;
+            if (subCategory) {
+                displayText += ` - ${subCategory}`;
+            }
+            
+            document.getElementById('categoryDisplay').textContent = displayText;
+        });
+        
+        let selectedImages = [];
+        
+        function triggerImageUpload() {
+            document.getElementById('imageInput').click();
+        }
+        
+        function handleImageSelect(event) {
+            const files = event.target.files;
+            if (selectedImages.length + files.length > 9) {
+                alert('最多只能上传9张图片');
+                return;
+            }
+            
+            for (let i = 0; i < files.length; i++) {
+                if (selectedImages.length >= 9) break;
+                
+                const file = files[i];
+                if (file.type.startsWith('image/')) {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        selectedImages.push({
+                            file: file,
+                            dataUrl: e.target.result
+                        });
+                        updateImageDisplay();
+                    };
+                    reader.readAsDataURL(file);
+                }
+            }
+            
+            // 重置input以便再次选择相同文件
+            event.target.value = '';
+        }
+        
+        function updateImageDisplay() {
+            const container = document.getElementById('imageUpload');
+            const countElement = document.getElementById('imageCount');
+            
+            container.innerHTML = '';
+            
+            // 显示已选择的图片
+            selectedImages.forEach((image, index) => {
+                const imgItem = document.createElement('div');
+                imgItem.className = 'upload-item';
+                imgItem.style.backgroundImage = `url(${image.dataUrl})`;
+                imgItem.style.backgroundSize = 'cover';
+                imgItem.style.backgroundPosition = 'center';
+                imgItem.style.position = 'relative';
+                
+                const deleteBtn = document.createElement('div');
+                deleteBtn.innerHTML = '×';
+                deleteBtn.style.position = 'absolute';
+                deleteBtn.style.top = '-5px';
+                deleteBtn.style.right = '-5px';
+                deleteBtn.style.background = 'red';
+                deleteBtn.style.color = 'white';
+                deleteBtn.style.width = '20px';
+                deleteBtn.style.height = '20px';
+                deleteBtn.style.borderRadius = '50%';
+                deleteBtn.style.display = 'flex';
+                deleteBtn.style.alignItems = 'center';
+                deleteBtn.style.justifyContent = 'center';
+                deleteBtn.style.cursor = 'pointer';
+                deleteBtn.style.fontSize = '14px';
+                deleteBtn.onclick = function(e) {
+                    e.stopPropagation();
+                    selectedImages.splice(index, 1);
+                    updateImageDisplay();
+                };
+                
+                imgItem.appendChild(deleteBtn);
+                container.appendChild(imgItem);
+            });
+            
+            // 添加上传按钮（如果还有空间）
+            if (selectedImages.length < 9) {
+                const uploadBtn = document.createElement('div');
+                uploadBtn.className = 'upload-item';
+                uploadBtn.innerHTML = '<div class="plus">+</div>';
+                uploadBtn.onclick = triggerImageUpload;
+                container.appendChild(uploadBtn);
+            }
+            
+            countElement.textContent = `${selectedImages.length}/9`;
+        }
+        
+        function checkFormValidity() {
+            const contact = document.getElementById('contact').value.trim();
+            const content = document.getElementById('complaintContent').value.trim();
+            const submitBtn = document.getElementById('submitBtn');
+            
+            submitBtn.disabled = !(contact && content);
+        }
+        
+        async function submitComplaint() {
+            const contact = document.getElementById('contact').value.trim();
+            const content = document.getElementById('complaintContent').value.trim();
+            const mainCategory = localStorage.getItem('complaintCategory');
+            const subCategory = localStorage.getItem('complaintSubCategory');
+            
+            if (!contact || !content) {
+                alert('请填写必填字段');
+                return;
+            }
+            
+            const submitBtn = document.getElementById('submitBtn');
+            submitBtn.disabled = true;
+            submitBtn.textContent = '提交中...';
+            
+            try {
+                // 处理图片上传（这里简化处理，实际应该上传到云存储）
+                const imageData = await processImagesForUpload();
+                
+                const complaintData = {
+                    mainCategory: mainCategory,
+                    subCategory: subCategory,
+                    contact: contact,
+                    content: content,
+                    images: imageData,
+                    submitTime: new Date().toISOString()
+                };
+                
+                const response = await fetch('/api/complaints', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(complaintData)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    // 清空本地存储
+                    localStorage.removeItem('complaintCategory');
+                    localStorage.removeItem('complaintSubCategory');
+                    
+                    // 跳转到成功页面
+                    window.location.href = '/success';
+                } else {
+                    alert('提交失败: ' + result.error);
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = '提交';
+                }
+            } catch (error) {
+                alert('网络错误: ' + error.message);
+                submitBtn.disabled = false;
+                submitBtn.textContent = '提交';
+            }
+        }
+        
+        async function processImagesForUpload() {
+            // 这里简化处理，实际应该将图片上传到云存储并返回URL
+            // 现在只返回图片的基本信息
+            return selectedImages.map((img, index) => ({
+                name: `image_${index + 1}.jpg`,
+                size: img.file.size,
+                type: img.file.type
+            }));
+        }
+    </script>
+</body>
+</html>
