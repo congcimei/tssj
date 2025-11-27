@@ -47,7 +47,7 @@ export default {
       return new Response(null, { headers: corsHeaders });
     }
 
-    // 路由处理
+    // 路由处理 - 修复：确保路径匹配正确
     if (path === '/' || path === '/index.html') {
       return serveIndexPage();
     } else if (path === '/submit') {
@@ -55,7 +55,7 @@ export default {
     } else if (path === '/success') {
       return serveSuccessPage();
     } else if (path === '/admin') {
-      return await serveAdminPage(request, env);
+      return await handleAdminRoute(request, env);
     } else if (path === '/api/complaints' && method === 'POST') {
       return await handleComplaintSubmit(request, env, corsHeaders);
     } else if (path === '/api/complaints' && method === 'GET') {
@@ -80,7 +80,7 @@ function serveIndexPage() {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <title> </title>
+    <title>投诉系统</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -255,7 +255,7 @@ function serveSubmitPage() {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <title> </title>
+    <title>提交投诉</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -421,6 +421,11 @@ function serveSubmitPage() {
                     body: JSON.stringify(complaintData)
                 });
                 
+                // 修复：检查响应状态
+                if (!response.ok) {
+                    throw new Error(`HTTP错误! 状态: ${response.status}`);
+                }
+                
                 const result = await response.json();
                 
                 if (result.success) {
@@ -456,7 +461,7 @@ function serveSuccessPage() {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <title> </title>
+    <title>提交成功</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -494,15 +499,41 @@ function serveSuccessPage() {
   });
 }
 
-// 管理后台页面
-async function serveAdminPage(request, env) {
+// 管理后台路由处理
+async function handleAdminRoute(request, env) {
+  const url = new URL(request.url);
+  
   // 检查是否已登录
   const cookieHeader = request.headers.get('Cookie') || '';
   const isLoggedIn = cookieHeader.includes('admin_authenticated=true');
   
   if (!isLoggedIn) {
-    // 显示登录页面
-    const loginHtml = `<!DOCTYPE html>
+    // 未登录，显示登录页面
+    return serveAdminLoginPage();
+  }
+  
+  // 已登录，显示管理后台
+  try {
+    const complaints = await env.DB.prepare(`
+      SELECT id, main_category, sub_category, contact, content, images, status, created_at
+      FROM complaints ORDER BY created_at DESC
+    `).all();
+    
+    return serveAdminDashboard(complaints.results);
+  } catch (error) {
+    return new Response('数据库错误: ' + error.message, { 
+      status: 500,
+      headers: { 
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Access-Control-Allow-Origin': '*'
+      }
+    });
+  }
+}
+
+// 管理员登录页面
+function serveAdminLoginPage() {
+  const html = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -510,8 +541,17 @@ async function serveAdminPage(request, env) {
     <title>管理后台登录</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f5f5f5; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
-        .login-container { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif; 
+            background: #f5f5f5; 
+            display: flex; justify-content: center; align-items: center; 
+            min-height: 100vh; 
+        }
+        .login-container { 
+            background: white; padding: 40px; border-radius: 8px; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1); 
+            width: 100%; max-width: 400px; 
+        }
         .login-title { text-align: center; margin-bottom: 30px; color: #333; }
         .form-group { margin-bottom: 20px; }
         .form-label { display: block; margin-bottom: 8px; font-weight: 500; }
@@ -563,42 +603,17 @@ async function serveAdminPage(request, env) {
     </script>
 </body>
 </html>`;
-    
-    return new Response(loginHtml, {
-      headers: { 
-        'Content-Type': 'text/html; charset=utf-8',
-        'Access-Control-Allow-Origin': '*'
-      }
-    });
-  }
   
-  // 已登录，显示管理后台
-  try {
-    const complaints = await env.DB.prepare(`
-      SELECT id, main_category, sub_category, contact, content, images, status, created_at
-      FROM complaints ORDER BY created_at DESC
-    `).all();
-    
-    const adminHtml = generateAdminHtml(complaints.results);
-    return new Response(adminHtml, {
-      headers: { 
-        'Content-Type': 'text/html; charset=utf-8',
-        'Access-Control-Allow-Origin': '*'
-      }
-    });
-  } catch (error) {
-    return new Response('数据库错误: ' + error.message, { 
-      status: 500,
-      headers: { 
-        'Content-Type': 'text/plain; charset=utf-8',
-        'Access-Control-Allow-Origin': '*'
-      }
-    });
-  }
+  return new Response(html, {
+    headers: { 
+      'Content-Type': 'text/html; charset=utf-8',
+      'Access-Control-Allow-Origin': '*'
+    }
+  });
 }
 
-// 生成管理后台HTML
-function generateAdminHtml(complaints) {
+// 管理后台主页面
+function serveAdminDashboard(complaints) {
   const complaintsHtml = complaints.map(complaint => `
     <div class="complaint-item">
       <div class="complaint-header">
@@ -621,7 +636,7 @@ function generateAdminHtml(complaints) {
     </div>
   `).join('');
   
-  return `<!DOCTYPE html>
+  const html = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -629,19 +644,40 @@ function generateAdminHtml(complaints) {
     <title>管理后台</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f5f5f5; padding: 20px; }
-        .admin-header { background: #07C160; color: white; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
-        .complaint-item { background: white; padding: 20px; margin-bottom: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-        .complaint-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif; 
+            background: #f5f5f5; padding: 20px; 
+        }
+        .admin-header { 
+            background: #07C160; color: white; padding: 15px; 
+            border-radius: 8px; margin-bottom: 20px; 
+            display: flex; justify-content: space-between; align-items: center; 
+        }
+        .complaint-item { 
+            background: white; padding: 20px; margin-bottom: 15px; 
+            border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); 
+        }
+        .complaint-header { 
+            display: flex; justify-content: space-between; align-items: center; 
+            margin-bottom: 10px; 
+        }
         .status { padding: 4px 8px; border-radius: 4px; font-size: 12px; }
         .status.pending { background: #fff3cd; color: #856404; }
         .status.processing { background: #cce7ff; color: #004085; }
         .status.resolved { background: #d4edda; color: #155724; }
         .complaint-info { margin-bottom: 10px; color: #666; }
         .complaint-content { margin-bottom: 15px; line-height: 1.5; }
-        .complaint-actions button { margin-right: 10px; padding: 5px 10px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; }
-        .complaint-actions .delete-btn { background: #dc3545; color: white; border-color: #dc3545; }
-        .logout-btn { background: #6c757d; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; }
+        .complaint-actions button { 
+            margin-right: 10px; padding: 5px 10px; 
+            border: 1px solid #ddd; border-radius: 4px; cursor: pointer; 
+        }
+        .complaint-actions .delete-btn { 
+            background: #dc3545; color: white; border-color: #dc3545; 
+        }
+        .logout-btn { 
+            background: #6c757d; color: white; border: none; 
+            padding: 8px 16px; border-radius: 4px; cursor: pointer; 
+        }
         .back-link { margin-bottom: 20px; }
     </style>
 </head>
@@ -706,6 +742,13 @@ function generateAdminHtml(complaints) {
     </script>
 </body>
 </html>`;
+
+  return new Response(html, {
+    headers: { 
+      'Content-Type': 'text/html; charset=utf-8',
+      'Access-Control-Allow-Origin': '*'
+    }
+  });
 }
 
 // 处理投诉提交
@@ -756,6 +799,7 @@ async function handleComplaintSubmit(request, env, corsHeaders) {
       }, 500, corsHeaders);
     }
   } catch (error) {
+    console.error('提交投诉错误:', error);
     return jsonResponse({
       success: false,
       error: '提交失败: ' + error.message
@@ -767,14 +811,14 @@ async function handleComplaintSubmit(request, env, corsHeaders) {
 async function handleAdminLogin(request, env, corsHeaders) {
   try {
     const data = await request.json();
-    const correctPassword = env.PASSWORD || 'admin123';
+    const correctPassword = env.ADMIN_PASSWORD || 'admin123';
     
     if (data.password === correctPassword) {
       return new Response(JSON.stringify({ success: true }), {
         status: 200,
         headers: {
           'Content-Type': 'application/json',
-          'Set-Cookie': 'admin_authenticated=true; Path=/; HttpOnly; SameSite=Strict',
+          'Set-Cookie': 'admin_authenticated=true; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400',
           ...corsHeaders
         }
       });
