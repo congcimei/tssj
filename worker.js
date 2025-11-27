@@ -54,12 +54,16 @@ export default {
       return serveSubmitPage();
     } else if (path === '/success') {
       return serveSuccessPage();
+    } else if (path === '/admin') {
+      return serveAdminPage(request, env);
     } else if (path === '/api/complaints' && method === 'POST') {
       return handleComplaintSubmit(request, env, corsHeaders);
     } else if (path === '/api/complaints' && method === 'GET') {
       return getComplaints(request, env, corsHeaders);
     } else if (path.startsWith('/api/complaints/') && method === 'DELETE') {
       return deleteComplaint(request, env, path, corsHeaders);
+    } else if (path === '/api/admin/login' && method === 'POST') {
+      return handleAdminLogin(request, env, corsHeaders);
     }
 
     return new Response('Not Found', { status: 404 });
@@ -97,6 +101,8 @@ function serveIndexPage() {
         .sub-category { background: #fafafa; padding-left: 15px; display: none; }
         .sub-item { padding: 12px 15px; border-bottom: 1px solid #f0f0f0; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
         .sub-item:last-child { border-bottom: none; }
+        .admin-link { text-align: center; margin: 20px; }
+        .admin-link a { color: #07C160; text-decoration: none; font-size: 14px; }
     </style>
 </head>
 <body>
@@ -191,6 +197,10 @@ function serveIndexPage() {
         </div>
     </div>
 
+    <div class="admin-link">
+        <a href="/admin">管理后台</a>
+    </div>
+
     <script>
         function toggleSubCategory(categoryId) {
             const element = document.getElementById(categoryId);
@@ -255,8 +265,6 @@ function serveSubmitPage() {
             body { max-width: 414px; margin: 0 auto; border-left: 1px solid #e0e0e0; border-right: 1px solid #e0e0e0; min-height: 100vh; }
         }
         .header { background: #07C160; color: white; padding: 15px; text-align: center; position: relative; }
-        .header h1 { font-size: 18px; font-weight: normal; }
-        .back-btn { position: absolute; left: 15px; top: 50%; transform: translateY(-50%); color: white; text-decoration: none; font-size: 16px; }
         .form-section { background: white; margin-top: 10px; padding: 15px; }
         .category-info { background: #f8f8f8; padding: 10px; border-radius: 4px; margin-bottom: 15px; font-size: 14px; }
         .form-group { margin-bottom: 20px; }
@@ -274,8 +282,6 @@ function serveSubmitPage() {
 </head>
 <body>
     <div class="header">
-        <a href="javascript:history.back()" class="back-btn">返回</a>
-        <h1>提交投诉</h1>
     </div>
     
     <div class="form-section">
@@ -403,8 +409,7 @@ function serveSubmitPage() {
                         name: 'image_' + (index + 1) + '.jpg',
                         size: img.file.size,
                         type: img.file.type
-                    })),
-                    submitTime: new Date().toISOString()
+                    }))
                 };
                 
                 const response = await fetch('/api/complaints', {
@@ -413,9 +418,18 @@ function serveSubmitPage() {
                     body: JSON.stringify(complaintData)
                 });
                 
-                // 修复JSON解析错误
-                if (!response.ok) throw new Error('HTTP错误! 状态: ' + response.status);
-                const result = await response.json();
+                // 修复JSON解析错误 - 先检查响应状态
+                if (!response.ok) {
+                    throw new Error(`HTTP错误! 状态: ${response.status}`);
+                }
+                
+                const text = await response.text();
+                let result;
+                try {
+                    result = text ? JSON.parse(text) : {};
+                } catch (e) {
+                    throw new Error('服务器返回了无效的JSON响应');
+                }
                 
                 if (result.success) {
                     localStorage.removeItem('complaintCategory');
@@ -473,7 +487,7 @@ function serveSuccessPage() {
     <div class="success-container">
         <div class="success-icon">✓</div>
         <div class="success-title">提交成功</div>
-        <div class="success-message">感谢您的反馈，我们会在7个工作日内处理您的投诉。<br>祝您生活愉快。</div>
+        <div class="success-message">感谢您的反馈，我们会在3个工作日内处理您的投诉。<br>请保持联系方式畅通。</div>
         <button class="back-btn" onclick="goBackToHome()">返回首页</button>
     </div>
     <script>function goBackToHome() { window.location.href = '/'; }</script>
@@ -488,7 +502,210 @@ function serveSuccessPage() {
   });
 }
 
-// 处理投诉提交
+// 管理后台页面
+async function serveAdminPage(request, env) {
+  // 检查是否已登录
+  const cookieHeader = request.headers.get('Cookie') || '';
+  const isLoggedIn = cookieHeader.includes('admin_authenticated=true');
+  
+  if (!isLoggedIn) {
+    // 显示登录页面
+    const loginHtml = `
+    <!DOCTYPE html>
+    <html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>管理后台登录</title>
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f5f5f5; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+            .login-container { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }
+            .login-title { text-align: center; margin-bottom: 30px; color: #333; }
+            .form-group { margin-bottom: 20px; }
+            .form-label { display: block; margin-bottom: 8px; font-weight: 500; }
+            .form-input { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 16px; }
+            .login-btn { background: #07C160; color: white; border: none; padding: 12px; border-radius: 4px; font-size: 16px; width: 100%; cursor: pointer; }
+            .error-message { color: red; text-align: center; margin-top: 10px; display: none; }
+            .back-link { text-align: center; margin-top: 20px; }
+        </style>
+    </head>
+    <body>
+        <div class="login-container">
+            <h1 class="login-title">管理后台登录</h1>
+            <form id="loginForm">
+                <div class="form-group">
+                    <label class="form-label">密码</label>
+                    <input type="password" class="form-input" id="password" required>
+                </div>
+                <button type="submit" class="login-btn">登录</button>
+                <div class="error-message" id="errorMessage">密码错误</div>
+            </form>
+            <div class="back-link">
+                <a href="/">返回首页</a>
+            </div>
+        </div>
+        <script>
+            document.getElementById('loginForm').addEventListener('submit', async function(e) {
+                e.preventDefault();
+                const password = document.getElementById('password').value;
+                const errorMessage = document.getElementById('errorMessage');
+                
+                try {
+                    const response = await fetch('/api/admin/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ password: password })
+                    });
+                    
+                    const result = await response.json();
+                    if (result.success) {
+                        window.location.href = '/admin';
+                    } else {
+                        errorMessage.style.display = 'block';
+                    }
+                } catch (error) {
+                    errorMessage.textContent = '网络错误';
+                    errorMessage.style.display = 'block';
+                }
+            });
+        </script>
+    </body>
+    </html>`;
+    
+    return new Response(loginHtml, {
+      headers: { 'Content-Type': 'text/html; charset=utf-8' }
+    });
+  }
+  
+  // 已登录，显示管理后台
+  try {
+    const complaints = await env.DB.prepare(`
+      SELECT id, main_category, sub_category, contact, content, images, status, created_at
+      FROM complaints ORDER BY created_at DESC
+    `).all();
+    
+    const adminHtml = generateAdminHtml(complaints.results);
+    return new Response(adminHtml, {
+      headers: { 'Content-Type': 'text/html; charset=utf-8' }
+    });
+  } catch (error) {
+    return new Response('数据库错误: ' + error.message, { status: 500 });
+  }
+}
+
+// 生成管理后台HTML
+function generateAdminHtml(complaints) {
+  const complaintsHtml = complaints.map(complaint => `
+    <div class="complaint-item">
+      <div class="complaint-header">
+        <strong>${escapeHtml(complaint.main_category)}</strong>
+        ${complaint.sub_category ? ` - ${escapeHtml(complaint.sub_category)}` : ''}
+        <span class="status ${complaint.status}">${complaint.status}</span>
+      </div>
+      <div class="complaint-info">
+        <div><strong>联系方式:</strong> ${escapeHtml(complaint.contact)}</div>
+        <div><strong>提交时间:</strong> ${new Date(complaint.created_at).toLocaleString()}</div>
+      </div>
+      <div class="complaint-content">
+        <strong>投诉内容:</strong> ${escapeHtml(complaint.content)}
+      </div>
+      <div class="complaint-actions">
+        <button onclick="updateStatus('${complaint.id}', 'processing')">标记为处理中</button>
+        <button onclick="updateStatus('${complaint.id}', 'resolved')">标记为已解决</button>
+        <button onclick="deleteComplaint('${complaint.id}')" class="delete-btn">删除</button>
+      </div>
+    </div>
+  `).join('');
+  
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理后台</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f5f5f5; padding: 20px; }
+        .admin-header { background: #07C160; color: white; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
+        .complaint-item { background: white; padding: 20px; margin-bottom: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .complaint-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .status { padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+        .status.pending { background: #fff3cd; color: #856404; }
+        .status.processing { background: #cce7ff; color: #004085; }
+        .status.resolved { background: #d4edda; color: #155724; }
+        .complaint-info { margin-bottom: 10px; color: #666; }
+        .complaint-content { margin-bottom: 15px; line-height: 1.5; }
+        .complaint-actions button { margin-right: 10px; padding: 5px 10px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; }
+        .complaint-actions .delete-btn { background: #dc3545; color: white; border-color: #dc3545; }
+        .logout-btn { background: #6c757d; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; }
+        .back-link { margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <div class="back-link">
+        <a href="/">← 返回首页</a>
+    </div>
+    <div class="admin-header">
+        <h1>投诉管理后台 (共 ${complaints.length} 条投诉)</h1>
+        <button class="logout-btn" onclick="logout()">退出登录</button>
+    </div>
+    <div id="complaintsList">
+        ${complaints.length > 0 ? complaintsHtml : '<p>暂无投诉数据</p>'}
+    </div>
+    
+    <script>
+        async function updateStatus(complaintId, status) {
+            if (!confirm('确定要更新状态吗？')) return;
+            
+            try {
+                const response = await fetch('/api/complaints/' + complaintId, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: status })
+                });
+                
+                if (response.ok) {
+                    alert('状态更新成功');
+                    location.reload();
+                } else {
+                    alert('状态更新失败');
+                }
+            } catch (error) {
+                alert('网络错误: ' + error.message);
+            }
+        }
+        
+        async function deleteComplaint(complaintId) {
+            if (!confirm('确定要删除这条投诉吗？此操作不可恢复。')) return;
+            
+            try {
+                const response = await fetch('/api/complaints/' + complaintId, {
+                    method: 'DELETE'
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    alert('删除成功');
+                    location.reload();
+                } else {
+                    alert('删除失败: ' + result.error);
+                }
+            } catch (error) {
+                alert('网络错误: ' + error.message);
+            }
+        }
+        
+        function logout() {
+            document.cookie = 'admin_authenticated=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+            window.location.href = '/admin';
+        }
+    </script>
+</body>
+</html>`;
+}
+
+// 处理投诉提交 - 修复JSON错误
 async function handleComplaintSubmit(request, env, corsHeaders) {
   try {
     if (request.method !== 'POST') {
@@ -497,7 +714,11 @@ async function handleComplaintSubmit(request, env, corsHeaders) {
 
     let data;
     try {
-      data = await request.json();
+      const text = await request.text();
+      if (!text) {
+        return jsonResponse({ success: false, error: '请求体为空' }, 400, corsHeaders);
+      }
+      data = JSON.parse(text);
     } catch (error) {
       return jsonResponse({ success: false, error: '无效的JSON数据' }, 400, corsHeaders);
     }
@@ -535,7 +756,7 @@ async function handleComplaintSubmit(request, env, corsHeaders) {
     } else {
       return jsonResponse({
         success: false,
-        error: '数据库存储失败'
+        error: '数据库存储失败: ' + result.error
       }, 500, corsHeaders);
     }
   } catch (error) {
@@ -543,6 +764,29 @@ async function handleComplaintSubmit(request, env, corsHeaders) {
       success: false,
       error: '提交失败: ' + error.message
     }, 500, corsHeaders);
+  }
+}
+
+// 管理员登录
+async function handleAdminLogin(request, env, corsHeaders) {
+  try {
+    const data = await request.json();
+    const correctPassword = env.PASSWORD || 'admin123'; // 默认密码
+    
+    if (data.password === correctPassword) {
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'Set-Cookie': 'admin_authenticated=true; Path=/; HttpOnly; SameSite=Strict',
+          ...corsHeaders
+        }
+      });
+    } else {
+      return jsonResponse({ success: false, error: '密码错误' }, 401, corsHeaders);
+    }
+  } catch (error) {
+    return jsonResponse({ success: false, error: '登录失败' }, 500, corsHeaders);
   }
 }
 
@@ -569,7 +813,7 @@ async function deleteComplaint(request, env, path, corsHeaders) {
   try {
     const result = await env.DB.prepare('DELETE FROM complaints WHERE id = ?').bind(complaintId).run();
     return jsonResponse({ 
-      success: result.success, 
+      success: !!result.success, 
       message: result.success ? '投诉删除成功' : '删除失败' 
     }, result.success ? 200 : 500, corsHeaders);
   } catch (error) {
@@ -590,4 +834,14 @@ function jsonResponse(data, status = 200, corsHeaders = {}) {
       ...corsHeaders
     }
   });
+}
+
+function escapeHtml(unsafe) {
+  if (!unsafe) return '';
+  return unsafe
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
