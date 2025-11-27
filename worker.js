@@ -55,15 +55,17 @@ export default {
     } else if (path === '/success') {
       return serveSuccessPage();
     } else if (path === '/admin') {
-      return serveAdminPage(request, env);
+      return await serveAdminPage(request, env);
     } else if (path === '/api/complaints' && method === 'POST') {
-      return handleComplaintSubmit(request, env, corsHeaders);
+      return await handleComplaintSubmit(request, env, corsHeaders);
     } else if (path === '/api/complaints' && method === 'GET') {
-      return getComplaints(request, env, corsHeaders);
+      return await getComplaints(request, env, corsHeaders);
     } else if (path.startsWith('/api/complaints/') && method === 'DELETE') {
-      return deleteComplaint(request, env, path, corsHeaders);
+      return await deleteComplaint(request, env, path, corsHeaders);
     } else if (path === '/api/admin/login' && method === 'POST') {
-      return handleAdminLogin(request, env, corsHeaders);
+      return await handleAdminLogin(request, env, corsHeaders);
+    } else if (path.startsWith('/api/complaints/') && method === 'PUT') {
+      return await updateComplaintStatus(request, env, path, corsHeaders);
     }
 
     return new Response('Not Found', { status: 404 });
@@ -282,6 +284,7 @@ function serveSubmitPage() {
 </head>
 <body>
     <div class="header">
+        <h1>提交投诉</h1>
     </div>
     
     <div class="form-section">
@@ -418,18 +421,7 @@ function serveSubmitPage() {
                     body: JSON.stringify(complaintData)
                 });
                 
-                // 修复JSON解析错误 - 先检查响应状态
-                if (!response.ok) {
-                    throw new Error(`HTTP错误! 状态: ${response.status}`);
-                }
-                
-                const text = await response.text();
-                let result;
-                try {
-                    result = text ? JSON.parse(text) : {};
-                } catch (e) {
-                    throw new Error('服务器返回了无效的JSON响应');
-                }
+                const result = await response.json();
                 
                 if (result.success) {
                     localStorage.removeItem('complaintCategory');
@@ -510,71 +502,73 @@ async function serveAdminPage(request, env) {
   
   if (!isLoggedIn) {
     // 显示登录页面
-    const loginHtml = `
-    <!DOCTYPE html>
-    <html lang="zh-CN">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>管理后台登录</title>
-        <style>
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f5f5f5; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
-            .login-container { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }
-            .login-title { text-align: center; margin-bottom: 30px; color: #333; }
-            .form-group { margin-bottom: 20px; }
-            .form-label { display: block; margin-bottom: 8px; font-weight: 500; }
-            .form-input { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 16px; }
-            .login-btn { background: #07C160; color: white; border: none; padding: 12px; border-radius: 4px; font-size: 16px; width: 100%; cursor: pointer; }
-            .error-message { color: red; text-align: center; margin-top: 10px; display: none; }
-            .back-link { text-align: center; margin-top: 20px; }
-        </style>
-    </head>
-    <body>
-        <div class="login-container">
-            <h1 class="login-title">管理后台登录</h1>
-            <form id="loginForm">
-                <div class="form-group">
-                    <label class="form-label">密码</label>
-                    <input type="password" class="form-input" id="password" required>
-                </div>
-                <button type="submit" class="login-btn">登录</button>
-                <div class="error-message" id="errorMessage">密码错误</div>
-            </form>
-            <div class="back-link">
-                <a href="/">返回首页</a>
+    const loginHtml = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理后台登录</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f5f5f5; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+        .login-container { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }
+        .login-title { text-align: center; margin-bottom: 30px; color: #333; }
+        .form-group { margin-bottom: 20px; }
+        .form-label { display: block; margin-bottom: 8px; font-weight: 500; }
+        .form-input { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 16px; }
+        .login-btn { background: #07C160; color: white; border: none; padding: 12px; border-radius: 4px; font-size: 16px; width: 100%; cursor: pointer; }
+        .error-message { color: red; text-align: center; margin-top: 10px; display: none; }
+        .back-link { text-align: center; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <h1 class="login-title">管理后台登录</h1>
+        <form id="loginForm">
+            <div class="form-group">
+                <label class="form-label">密码</label>
+                <input type="password" class="form-input" id="password" required>
             </div>
+            <button type="submit" class="login-btn">登录</button>
+            <div class="error-message" id="errorMessage">密码错误</div>
+        </form>
+        <div class="back-link">
+            <a href="/">返回首页</a>
         </div>
-        <script>
-            document.getElementById('loginForm').addEventListener('submit', async function(e) {
-                e.preventDefault();
-                const password = document.getElementById('password').value;
-                const errorMessage = document.getElementById('errorMessage');
+    </div>
+    <script>
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const password = document.getElementById('password').value;
+            const errorMessage = document.getElementById('errorMessage');
+            
+            try {
+                const response = await fetch('/api/admin/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: password })
+                });
                 
-                try {
-                    const response = await fetch('/api/admin/login', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ password: password })
-                    });
-                    
-                    const result = await response.json();
-                    if (result.success) {
-                        window.location.href = '/admin';
-                    } else {
-                        errorMessage.style.display = 'block';
-                    }
-                } catch (error) {
-                    errorMessage.textContent = '网络错误';
+                const result = await response.json();
+                if (result.success) {
+                    window.location.href = '/admin';
+                } else {
                     errorMessage.style.display = 'block';
                 }
-            });
-        </script>
-    </body>
-    </html>`;
+            } catch (error) {
+                errorMessage.textContent = '网络错误';
+                errorMessage.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>`;
     
     return new Response(loginHtml, {
-      headers: { 'Content-Type': 'text/html; charset=utf-8' }
+      headers: { 
+        'Content-Type': 'text/html; charset=utf-8',
+        'Access-Control-Allow-Origin': '*'
+      }
     });
   }
   
@@ -587,10 +581,19 @@ async function serveAdminPage(request, env) {
     
     const adminHtml = generateAdminHtml(complaints.results);
     return new Response(adminHtml, {
-      headers: { 'Content-Type': 'text/html; charset=utf-8' }
+      headers: { 
+        'Content-Type': 'text/html; charset=utf-8',
+        'Access-Control-Allow-Origin': '*'
+      }
     });
   } catch (error) {
-    return new Response('数据库错误: ' + error.message, { status: 500 });
+    return new Response('数据库错误: ' + error.message, { 
+      status: 500,
+      headers: { 
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Access-Control-Allow-Origin': '*'
+      }
+    });
   }
 }
 
@@ -705,19 +708,12 @@ function generateAdminHtml(complaints) {
 </html>`;
 }
 
-// 处理投诉提交 - 修复JSON错误
+// 处理投诉提交
 async function handleComplaintSubmit(request, env, corsHeaders) {
   try {
-    if (request.method !== 'POST') {
-      return jsonResponse({ success: false, error: 'Method not allowed' }, 405, corsHeaders);
-    }
-
     let data;
     try {
       const text = await request.text();
-      if (!text) {
-        return jsonResponse({ success: false, error: '请求体为空' }, 400, corsHeaders);
-      }
       data = JSON.parse(text);
     } catch (error) {
       return jsonResponse({ success: false, error: '无效的JSON数据' }, 400, corsHeaders);
@@ -756,7 +752,7 @@ async function handleComplaintSubmit(request, env, corsHeaders) {
     } else {
       return jsonResponse({
         success: false,
-        error: '数据库存储失败: ' + result.error
+        error: '数据库存储失败'
       }, 500, corsHeaders);
     }
   } catch (error) {
@@ -771,7 +767,7 @@ async function handleComplaintSubmit(request, env, corsHeaders) {
 async function handleAdminLogin(request, env, corsHeaders) {
   try {
     const data = await request.json();
-    const correctPassword = env.PASSWORD || 'admin123'; // 默认密码
+    const correctPassword = env.PASSWORD || 'admin123';
     
     if (data.password === correctPassword) {
       return new Response(JSON.stringify({ success: true }), {
@@ -815,6 +811,24 @@ async function deleteComplaint(request, env, path, corsHeaders) {
     return jsonResponse({ 
       success: !!result.success, 
       message: result.success ? '投诉删除成功' : '删除失败' 
+    }, result.success ? 200 : 500, corsHeaders);
+  } catch (error) {
+    return jsonResponse({ success: false, error: error.message }, 500, corsHeaders);
+  }
+}
+
+// 更新投诉状态
+async function updateComplaintStatus(request, env, path, corsHeaders) {
+  const complaintId = path.split('/').pop();
+  try {
+    const data = await request.json();
+    const result = await env.DB.prepare('UPDATE complaints SET status = ? WHERE id = ?')
+      .bind(data.status, complaintId)
+      .run();
+    
+    return jsonResponse({ 
+      success: !!result.success, 
+      message: result.success ? '状态更新成功' : '更新失败' 
     }, result.success ? 200 : 500, corsHeaders);
   } catch (error) {
     return jsonResponse({ success: false, error: error.message }, 500, corsHeaders);
