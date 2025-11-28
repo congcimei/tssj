@@ -17,8 +17,16 @@ async function initializeDatabase(env) {
           content TEXT NOT NULL,
           images TEXT DEFAULT '[]',
           status TEXT NOT NULL DEFAULT 'pending',
-          created_at TEXT NOT NULL
+          created_at TEXT NOT NULL,
+          updated_at TEXT
         )
+      `);
+      
+      // 创建索引
+      await env.DB.exec(`
+        CREATE INDEX idx_complaints_created_at ON complaints(created_at);
+        CREATE INDEX idx_complaints_status ON complaints(status);
+        CREATE INDEX idx_complaints_category ON complaints(main_category, sub_category);
       `);
       console.log('数据库表创建成功！');
     }
@@ -47,12 +55,14 @@ export default {
       return new Response(null, { headers: corsHeaders });
     }
 
-    // 路由处理 - 修复：确保路径匹配正确
-    if (path === '/' || path === '/index.html') {
+    console.log(`请求路径: ${path}, 方法: ${method}`);
+
+    // 修复路由匹配逻辑
+    if (path === '/' || path === '/index.html' || path === '') {
       return serveIndexPage();
-    } else if (path === '/submit') {
+    } else if (path === '/submit' || path === '/submit.html') {
       return serveSubmitPage();
-    } else if (path === '/success') {
+    } else if (path === '/success' || path === '/success.html') {
       return serveSuccessPage();
     } else if (path === '/admin') {
       return await handleAdminRoute(request, env);
@@ -61,14 +71,16 @@ export default {
     } else if (path === '/api/complaints' && method === 'GET') {
       return await getComplaints(request, env, corsHeaders);
     } else if (path.startsWith('/api/complaints/') && method === 'DELETE') {
-      return await deleteComplaint(request, env, path, corsHeaders);
+      const complaintId = path.split('/').pop();
+      return await deleteComplaint(request, env, complaintId, corsHeaders);
     } else if (path === '/api/admin/login' && method === 'POST') {
       return await handleAdminLogin(request, env, corsHeaders);
     } else if (path.startsWith('/api/complaints/') && method === 'PUT') {
-      return await updateComplaintStatus(request, env, path, corsHeaders);
+      const complaintId = path.split('/').pop();
+      return await updateComplaintStatus(request, env, complaintId, corsHeaders);
     }
 
-    return new Response('Not Found', { status: 404 });
+    return new Response('Not Found', { status: 404, headers: corsHeaders });
   }
 };
 
@@ -318,19 +330,30 @@ function serveSubmitPage() {
         document.addEventListener('DOMContentLoaded', function() {
             const mainCategory = localStorage.getItem('complaintCategory');
             const subCategory = localStorage.getItem('complaintSubCategory');
-            let displayText = mainCategory;
+            let displayText = mainCategory || '未知类型';
             if (subCategory) displayText += ' - ' + subCategory;
             document.getElementById('categoryDisplay').textContent = displayText;
+            
+            // 如果没有选择类型，返回首页
+            if (!mainCategory) {
+                setTimeout(() => {
+                    alert('请先选择投诉类型');
+                    window.location.href = '/';
+                }, 100);
+            }
         });
         
         let selectedImages = [];
         
-        function triggerImageUpload() { document.getElementById('imageInput').click(); }
+        function triggerImageUpload() { 
+            document.getElementById('imageInput').click(); 
+        }
         
         function handleImageSelect(event) {
             const files = event.target.files;
             if (selectedImages.length + files.length > 9) {
-                alert('最多只能上传9张图片'); return;
+                alert('最多只能上传9张图片'); 
+                return;
             }
             
             for (let i = 0; i < files.length; i++) {
@@ -396,7 +419,16 @@ function serveSubmitPage() {
             const mainCategory = localStorage.getItem('complaintCategory');
             const subCategory = localStorage.getItem('complaintSubCategory');
             
-            if (!contact || !content) { alert('请填写必填字段'); return; }
+            if (!contact || !content) { 
+                alert('请填写必填字段'); 
+                return; 
+            }
+            
+            if (!mainCategory) {
+                alert('请先选择投诉类型');
+                window.location.href = '/';
+                return;
+            }
             
             const submitBtn = document.getElementById('submitBtn');
             submitBtn.disabled = true;
@@ -405,7 +437,7 @@ function serveSubmitPage() {
             try {
                 const complaintData = {
                     mainCategory: mainCategory,
-                    subCategory: subCategory,
+                    subCategory: subCategory || '',
                     contact: contact,
                     content: content,
                     images: selectedImages.map((img, index) => ({
@@ -415,17 +447,24 @@ function serveSubmitPage() {
                     }))
                 };
                 
+                console.log('提交数据:', complaintData);
+                
                 const response = await fetch('/api/complaints', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
                     body: JSON.stringify(complaintData)
                 });
                 
-                // 修复：检查响应状态
+                // 首先检查响应状态
                 if (!response.ok) {
-                    throw new Error(`HTTP错误! 状态: ${response.status}`);
+                    const errorText = await response.text();
+                    throw new Error(\`HTTP错误! 状态: \${response.status}, 响应: \${errorText}\`);
                 }
                 
+                // 然后解析JSON
                 const result = await response.json();
                 
                 if (result.success) {
@@ -436,6 +475,7 @@ function serveSubmitPage() {
                     throw new Error(result.error || '提交失败');
                 }
             } catch (error) {
+                console.error('提交错误:', error);
                 alert('提交失败: ' + error.message);
                 submitBtn.disabled = false;
                 submitBtn.textContent = '提交';
@@ -507,6 +547,8 @@ async function handleAdminRoute(request, env) {
   const cookieHeader = request.headers.get('Cookie') || '';
   const isLoggedIn = cookieHeader.includes('admin_authenticated=true');
   
+  console.log('Admin route accessed, logged in:', isLoggedIn);
+  
   if (!isLoggedIn) {
     // 未登录，显示登录页面
     return serveAdminLoginPage();
@@ -519,8 +561,9 @@ async function handleAdminRoute(request, env) {
       FROM complaints ORDER BY created_at DESC
     `).all();
     
-    return serveAdminDashboard(complaints.results);
+    return serveAdminDashboard(complaints.results || []);
   } catch (error) {
+    console.error('Database error:', error);
     return new Response('数据库错误: ' + error.message, { 
       status: 500,
       headers: { 
@@ -614,7 +657,7 @@ function serveAdminLoginPage() {
 
 // 管理后台主页面
 function serveAdminDashboard(complaints) {
-  const complaintsHtml = complaints.map(complaint => `
+  const complaintsHtml = complaints.length > 0 ? complaints.map(complaint => `
     <div class="complaint-item">
       <div class="complaint-header">
         <strong>${escapeHtml(complaint.main_category)}</strong>
@@ -623,7 +666,7 @@ function serveAdminDashboard(complaints) {
       </div>
       <div class="complaint-info">
         <div><strong>联系方式:</strong> ${escapeHtml(complaint.contact)}</div>
-        <div><strong>提交时间:</strong> ${new Date(complaint.created_at).toLocaleString()}</div>
+        <div><strong>提交时间:</strong> ${new Date(complaint.created_at).toLocaleString('zh-CN')}</div>
       </div>
       <div class="complaint-content">
         <strong>投诉内容:</strong> ${escapeHtml(complaint.content)}
@@ -634,7 +677,7 @@ function serveAdminDashboard(complaints) {
         <button onclick="deleteComplaint('${complaint.id}')" class="delete-btn">删除</button>
       </div>
     </div>
-  `).join('');
+  `).join('') : '<p>暂无投诉数据</p>';
   
   const html = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -690,7 +733,7 @@ function serveAdminDashboard(complaints) {
         <button class="logout-btn" onclick="logout()">退出登录</button>
     </div>
     <div id="complaintsList">
-        ${complaints.length > 0 ? complaintsHtml : '<p>暂无投诉数据</p>'}
+        ${complaintsHtml}
     </div>
     
     <script>
@@ -754,13 +797,19 @@ function serveAdminDashboard(complaints) {
 // 处理投诉提交
 async function handleComplaintSubmit(request, env, corsHeaders) {
   try {
+    console.log('开始处理投诉提交');
+    
     let data;
     try {
       const text = await request.text();
+      console.log('接收到的数据:', text);
       data = JSON.parse(text);
     } catch (error) {
+      console.error('JSON解析错误:', error);
       return jsonResponse({ success: false, error: '无效的JSON数据' }, 400, corsHeaders);
     }
+    
+    console.log('解析后的数据:', data);
     
     if (!data.mainCategory || !data.contact || !data.content) {
       return jsonResponse({ 
@@ -772,6 +821,8 @@ async function handleComplaintSubmit(request, env, corsHeaders) {
     const complaintId = generateId();
     const createdAt = new Date().toISOString();
 
+    console.log('准备插入数据库:', complaintId, data);
+    
     const result = await env.DB.prepare(`
       INSERT INTO complaints (id, main_category, sub_category, contact, content, images, status, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -785,6 +836,8 @@ async function handleComplaintSubmit(request, env, corsHeaders) {
       'pending',
       createdAt
     ).run();
+
+    console.log('数据库插入结果:', result);
 
     if (result.success) {
       return jsonResponse({
@@ -811,7 +864,9 @@ async function handleComplaintSubmit(request, env, corsHeaders) {
 async function handleAdminLogin(request, env, corsHeaders) {
   try {
     const data = await request.json();
-    const correctPassword = env.ADMIN_PASSWORD || 'admin123';
+    const correctPassword = env.PASSWORD || 'Gyyhcy1314';
+    
+    console.log('登录尝试，密码:', data.password, '正确密码:', correctPassword);
     
     if (data.password === correctPassword) {
       return new Response(JSON.stringify({ success: true }), {
@@ -826,6 +881,7 @@ async function handleAdminLogin(request, env, corsHeaders) {
       return jsonResponse({ success: false, error: '密码错误' }, 401, corsHeaders);
     }
   } catch (error) {
+    console.error('登录错误:', error);
     return jsonResponse({ success: false, error: '登录失败' }, 500, corsHeaders);
   }
 }
@@ -840,16 +896,16 @@ async function getComplaints(request, env, corsHeaders) {
 
     return jsonResponse({
       success: true,
-      complaints: complaints.results
+      complaints: complaints.results || []
     }, 200, corsHeaders);
   } catch (error) {
+    console.error('获取投诉列表错误:', error);
     return jsonResponse({ success: false, error: error.message }, 500, corsHeaders);
   }
 }
 
 // 删除投诉
-async function deleteComplaint(request, env, path, corsHeaders) {
-  const complaintId = path.split('/').pop();
+async function deleteComplaint(request, env, complaintId, corsHeaders) {
   try {
     const result = await env.DB.prepare('DELETE FROM complaints WHERE id = ?').bind(complaintId).run();
     return jsonResponse({ 
@@ -857,13 +913,13 @@ async function deleteComplaint(request, env, path, corsHeaders) {
       message: result.success ? '投诉删除成功' : '删除失败' 
     }, result.success ? 200 : 500, corsHeaders);
   } catch (error) {
+    console.error('删除投诉错误:', error);
     return jsonResponse({ success: false, error: error.message }, 500, corsHeaders);
   }
 }
 
 // 更新投诉状态
-async function updateComplaintStatus(request, env, path, corsHeaders) {
-  const complaintId = path.split('/').pop();
+async function updateComplaintStatus(request, env, complaintId, corsHeaders) {
   try {
     const data = await request.json();
     const result = await env.DB.prepare('UPDATE complaints SET status = ? WHERE id = ?')
@@ -875,6 +931,7 @@ async function updateComplaintStatus(request, env, path, corsHeaders) {
       message: result.success ? '状态更新成功' : '更新失败' 
     }, result.success ? 200 : 500, corsHeaders);
   } catch (error) {
+    console.error('更新投诉状态错误:', error);
     return jsonResponse({ success: false, error: error.message }, 500, corsHeaders);
   }
 }
